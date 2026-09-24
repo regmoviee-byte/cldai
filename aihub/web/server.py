@@ -217,8 +217,14 @@ class App:
         if os.name != "nt":
             return {"launched": False, "command": command}
         done = "Готово. Вернись в aihub и нажми «Проверить ещё раз». Это окно можно закрыть."
-        script = (f"Write-Host {_ps_quote(banner)} -ForegroundColor Cyan; {command}; "
-                  f"Write-Host ''; Write-Host {_ps_quote(done)} -ForegroundColor Green")
+        log = Path(os.environ.get("TEMP", ".")) / f"aihub-{action}-{name}.log"
+        # Windows PowerShell's download progress bar slows Invoke-WebRequest down by an order of
+        # magnitude (a 240 MB download looks hung), so switch it off.
+        script = (f"$ProgressPreference = 'SilentlyContinue'; "
+                  f"Start-Transcript -Path {_ps_quote(str(log))} -Force | Out-Null; "
+                  f"Write-Host {_ps_quote(banner)} -ForegroundColor Cyan; {command}; "
+                  f"Write-Host ''; Write-Host {_ps_quote(done)} -ForegroundColor Green; "
+                  f"Stop-Transcript | Out-Null")
         subprocess.Popen(["powershell.exe", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass",
                           "-Command", script], creationflags=subprocess.CREATE_NEW_CONSOLE)
         self._doctor = None

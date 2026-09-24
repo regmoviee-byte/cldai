@@ -64,6 +64,7 @@ jobs:
             Write-Host "claude=$($d.claude.installed) $($d.claude.version) file=$file procs=[$procs] | codex=$($d.codex.installed) $($d.codex.version)"
             $found = $d.claude.installed -and $d.codex.installed
           }
+          Get-Content "$env:TEMP\aihub-install-claude.log" -ErrorAction SilentlyContinue
           if (-not $found) { throw "agents not detected after install" }
           Stop-Process -Id $p.Id -Force
           Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*aihub*" } | Stop-Process -Force
