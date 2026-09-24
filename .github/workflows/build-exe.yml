@@ -39,8 +39,10 @@ jobs:
           $url = $null
           for ($i = 0; $i -lt 90 -and -not $url; $i++) {
             Start-Sleep 1
-            $m = Select-String -Path $log -Pattern '^AIHUB_URL (\S+)' -ErrorAction SilentlyContinue
-            if ($m) { $url = $m.Matches[0].Groups[1].Value }
+            if (Test-Path $log) {
+              $m = Select-String -Path $log -Pattern '^AIHUB_URL (\S+)'
+              if ($m) { $url = $m.Matches[0].Groups[1].Value }
+            }
           }
           if (-not $url) { Get-Content $log -ErrorAction SilentlyContinue; throw "server did not start" }
           Write-Host "url: $url"
