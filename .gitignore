@@ -6,3 +6,4 @@ dist/
 .aihub/
 launcher/payload.zip
 launcher/*.syso
+launcher/.build/
