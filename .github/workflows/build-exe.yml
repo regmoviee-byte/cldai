@@ -56,10 +56,12 @@ jobs:
             if (-not $r.launched) { throw "install window for $a was not launched" }
           }
           $found = $false
-          for ($i = 0; $i -lt 60 -and -not $found; $i++) {
+          for ($i = 0; $i -lt 36 -and -not $found; $i++) {
             Start-Sleep 5
             $d = Invoke-RestMethod "http://127.0.0.1:8799/api/doctor?refresh=1" -Headers $h
-            Write-Host "claude=$($d.claude.installed) $($d.claude.version) | codex=$($d.codex.installed) $($d.codex.version)"
+            $file = Test-Path "$HOME\.local\bin\claude.exe"
+            $procs = (Get-Process claude -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }) -join ","
+            Write-Host "claude=$($d.claude.installed) $($d.claude.version) file=$file procs=[$procs] | codex=$($d.codex.installed) $($d.codex.version)"
             $found = $d.claude.installed -and $d.codex.installed
           }
           if (-not $found) { throw "agents not detected after install" }
@@ -71,6 +73,11 @@ jobs:
         timeout-minutes: 8
         shell: pwsh
         run: |
+          Get-ChildItem "$HOME\.local\bin" -ErrorAction SilentlyContinue | Format-Table Name, Length, LastWriteTime
+          Get-Process claude, powershell -ErrorAction SilentlyContinue | Format-Table Id, Name, Path, StartTime
+          $env:AIHUB_HOME = "$env:RUNNER_TEMP\aihub-home"
+          $py = Get-ChildItem "$env:LOCALAPPDATA\aihub\runtime-*\python.exe" | Select-Object -First 1
+          & $py.FullName -c "from pathlib import Path; from aihub.agents import find_executable, known_locations; print('home', Path.home()); print('known', known_locations('claude')); print('found', find_executable('claude'))"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"
           Write-Host "exit: $LASTEXITCODE"
           Get-ChildItem "$HOME\.local\bin" -ErrorAction SilentlyContinue | Format-Table Name, Length
