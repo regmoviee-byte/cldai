@@ -315,12 +315,15 @@ class WebTests(Base):
         self.assertEqual([t["status"] for t in job["tasks"]], ["cancelled", "cancelled"])
 
     def test_agent_actions(self):
-        status, data = self.req("/api/agent-action", {"agent": "codex", "action": "install"})
-        self.assertEqual(status, 200, data)
-        self.assertFalse(data["launched"])  # not Windows: UI shows the command instead
-        self.assertIn("npm install -g @openai/codex", data["command"])
-        status, data = self.req("/api/agent-action", {"agent": "claude", "action": "login"})
-        self.assertIn("fake_claude.py", data["command"])
+        with mock.patch("aihub.web.server.subprocess.Popen") as popen:
+            status, data = self.req("/api/agent-action", {"agent": "codex", "action": "install"})
+            self.assertEqual(status, 200, data)
+            # Windows opens a PowerShell window; elsewhere the UI shows the command to copy.
+            self.assertEqual(data["launched"], os.name == "nt")
+            self.assertEqual(popen.called, os.name == "nt")
+            self.assertIn("npm install -g @openai/codex", data["command"])
+            status, data = self.req("/api/agent-action", {"agent": "claude", "action": "login"})
+            self.assertIn("fake_claude.py", data["command"])
         self.assertEqual(self.req("/api/agent-action", {"agent": "claude", "action": "rm -rf"})[0], 400)
         doctor = self.req("/api/doctor?refresh=1")[1]
         self.assertTrue(doctor["claude"]["installed"])
