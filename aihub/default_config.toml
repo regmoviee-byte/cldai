@@ -1,0 +1,83 @@
+# aihub — конфиг по умолчанию.
+# Скопируй в ~/.aihub/config.toml (команда `aihub init`) или положи aihub.toml
+# в корень проекта и переопредели только то, что нужно.
+
+[planner]
+# Кто режет задачу на куски:
+#   manual    — aihub печатает промпт, ты вставляешь его в обычный чат ChatGPT
+#               (приложение/сайт) и вставляешь ответ обратно. Квоты Codex/Claude Code не тратятся.
+#   codex     — `codex exec` на лёгком тире (дёшево, но тратит квоту Codex)
+#   claude    — `claude -p` на лёгком тире (haiku)
+#   heuristic — без LLM: одна подзадача, тир по ключевым словам
+backend = "manual"
+# Каким тиром планировать, когда backend = codex/claude
+tier = "light"
+# Если планировщик упал — откатиться на эвристику, а не падать
+fallback_to_heuristic = true
+
+[routing]
+# Кого предпочитать, если задача одинаково хорошо ложится на обоих:
+#   balanced | claude | codex
+prefer = "balanced"
+# Сколько часов считать агента «выжатым» после ответа про лимиты
+cooldown_hours = 5
+# За сколько дней показывать планировщику статистику расхода
+usage_window_days = 7
+
+[execution]
+# Сколько подзадач гонять одновременно. 1 — безопасно (агенты не правят одни и те же файлы наперегонки)
+parallel = 1
+# Спрашивать подтверждение плана перед запуском
+confirm = true
+# Если подзадача упала (не из-за лимитов) — повторить на тир выше
+escalate_on_failure = true
+# Сколько символов результата зависимостей передавать следующей подзадаче
+context_chars = 4000
+# Таймаут одной подзадачи, секунд
+timeout = 3600
+
+# ---------------------------------------------------------------- Claude Code
+[agents.claude]
+enabled = true
+command = "claude"
+# acceptEdits — правит файлы без вопросов; bash-команды вне allowed_tools будут отклонены.
+# Для полной автономии: "bypassPermissions" (только если доверяешь задаче).
+permission_mode = "acceptEdits"
+# Напр.: ["Bash(npm test:*)", "Bash(git diff:*)"]
+allowed_tools = []
+extra_args = []
+
+[agents.claude.tiers.light]
+model = "haiku"
+effort = "low"
+
+[agents.claude.tiers.medium]
+model = "sonnet"
+effort = "medium"
+
+[agents.claude.tiers.heavy]
+model = "opus"
+effort = "high"
+
+# ---------------------------------------------------------------------- Codex
+[agents.codex]
+enabled = true
+command = "codex"
+# read-only | workspace-write | danger-full-access
+sandbox = "workspace-write"
+extra_args = []
+
+# model = "" → модель по умолчанию из ~/.codex/config.toml, экономим через reasoning effort.
+# Лучше впиши сюда реальные названия лёгкой/средней/тяжёлой модели со своего тарифа
+# (посмотреть: запусти `codex` и набери /model).
+[agents.codex.tiers.light]
+model = ""
+effort = "low"
+
+[agents.codex.tiers.medium]
+model = ""
+effort = "medium"
+
+[agents.codex.tiers.heavy]
+model = ""
+effort = "high"

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aihub"
+version = "0.1.0"
+description = "Route coding tasks between Claude Code and Codex on the cheapest model that can do the job"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+aihub = "aihub.cli:main"
+
+[tool.setuptools]
+packages = ["aihub"]
+
+[tool.setuptools.package-data]
+aihub = ["default_config.toml"]
