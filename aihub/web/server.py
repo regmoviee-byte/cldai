@@ -11,7 +11,7 @@ import dataclasses
 import json
 import os
 import secrets
-import shutil
+import shlex
 import subprocess
 import threading
 import time
@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .. import __version__, service
-from ..agents import make_agents
+from ..agents import find_executable, make_agents
 from ..config import (AGENTS, DEFAULT_CONFIG_PATH, TIERS, ConfigError, deep_merge, dump_toml,
                       hub_home, load, save_user_config, user_config_path)
 from ..executor import Executor, reroute
@@ -33,6 +33,49 @@ from ..ledger import Ledger
 from ..planner import PlanError
 
 STATIC = Path(__file__).with_name("static")
+
+
+AGENT_TITLES = {"claude": "Claude Code", "codex": "Codex CLI"}
+
+# Official install commands. Windows ones run in PowerShell; Codex needs Node.js, which we
+# install with winget first when npm is missing.
+INSTALL = {
+    "windows": {
+        "claude": "irm https://claude.ai/install.ps1 | iex",
+        "codex": ("if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { "
+                  "winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements "
+                  "--accept-package-agreements; $env:Path = "
+                  "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + "
+                  "[Environment]::GetEnvironmentVariable('Path','User') }; "
+                  "npm install -g @openai/codex"),
+    },
+    "unix": {
+        "claude": "curl -fsSL https://claude.ai/install.sh | bash",
+        "codex": "npm install -g @openai/codex",
+    },
+}
+
+LOGIN_HINTS = {
+    "claude": "Сейчас запустится Claude Code. Выбери вход через подписку Claude и подтверди в "
+              "браузере. Когда увидишь приглашение ввода, набери /exit.",
+    "codex": "Сейчас откроется браузер: войди в свой аккаунт ChatGPT.",
+}
+
+
+def _os_key() -> str:
+    return "windows" if os.name == "nt" else "unix"
+
+
+def _ps_quote(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def login_command(name: str, cmd: list[str]) -> str:
+    """Shell text that starts the agent's login flow; cmd is the resolved agent command."""
+    parts = cmd + ([] if name == "claude" else ["login"])
+    if os.name == "nt":
+        return "& " + " ".join(_ps_quote(x) for x in parts)
+    return shlex.join(parts)
 
 
 class ApiError(Exception):
@@ -125,24 +168,61 @@ class App:
                 "prefer": self.cfg["routing"]["prefer"], "agents": agents,
                 "running": [j.id for j in self.jobs.values() if j.state == "running"]}
 
+    def _command(self, name: str) -> list[str]:
+        cmd = self.agents[name].cfg.get("command", name)
+        return list(cmd) if isinstance(cmd, list) else shlex.split(cmd)
+
+    def _exe(self, name: str) -> str:
+        return self._command(name)[0]
+
     def doctor(self, q) -> dict:
         if self._doctor is None or q.get("refresh"):
             out = {}
-            for name, agent in self.agents.items():
-                cmd = agent.cfg.get("command", name)
-                exe = (cmd if isinstance(cmd, list) else cmd.split())[0]
-                path = shutil.which(exe)
-                info = {"installed": bool(path), "path": path, "version": ""}
+            for name in self.agents:
+                path = find_executable(self._exe(name))
+                info = {"installed": bool(path), "path": path, "version": "",
+                        "install_command": INSTALL[_os_key()][name],
+                        "can_launch": os.name == "nt"}
                 if path:
                     try:
                         info["version"] = subprocess.run(
-                            [path, "--version"], capture_output=True, text=True, timeout=20
+                            [path, "--version"], capture_output=True, text=True, timeout=20,
+                            stdin=subprocess.DEVNULL,
                         ).stdout.strip().splitlines()[0]
                     except (subprocess.SubprocessError, OSError, IndexError):
                         pass
                 out[name] = info
             self._doctor = out
         return self._doctor
+
+    def agent_action(self, body: dict) -> dict:
+        """Install or log in to an agent CLI in a new, visible console window (Windows).
+
+        Commands are fixed strings (plus the resolved exe path); nothing from the request
+        body reaches the shell except the agent/action names, which are whitelisted.
+        """
+        name, action = body.get("agent"), body.get("action")
+        if name not in AGENTS or action not in ("install", "login"):
+            raise ApiError("unknown agent or action")
+        if action == "install":
+            command = INSTALL[_os_key()][name]
+            banner = f"Устанавливаю {AGENT_TITLES[name]}…"
+        else:
+            cmd = self._command(name)
+            path = find_executable(cmd[0])
+            if not path:
+                raise ApiError(f"{AGENT_TITLES[name]} ещё не установлен")
+            command = login_command(name, [path, *cmd[1:]])
+            banner = LOGIN_HINTS[name]
+        if os.name != "nt":
+            return {"launched": False, "command": command}
+        done = "Готово. Вернись в aihub и нажми «Проверить ещё раз». Это окно можно закрыть."
+        script = (f"Write-Host {_ps_quote(banner)} -ForegroundColor Cyan; {command}; "
+                  f"Write-Host ''; Write-Host {_ps_quote(done)} -ForegroundColor Green")
+        subprocess.Popen(["powershell.exe", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                          "-Command", script], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        self._doctor = None
+        return {"launched": True, "command": command}
 
     def plan(self, body: dict) -> dict:
         task = (body.get("task") or "").strip()
@@ -287,7 +367,8 @@ def make_handler(app: App, port: int):
                   "/api/history": app.history, "/api/history/detail": app.history_detail,
                   "/api/settings": app.settings}
     post_routes = {"/api/plan": app.plan, "/api/plan/parse": app.parse_plan, "/api/run": app.run,
-                   "/api/cooldown": app.cooldown, "/api/settings": app.save_settings}
+                   "/api/cooldown": app.cooldown, "/api/settings": app.save_settings,
+                   "/api/agent-action": app.agent_action}
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "aihub"

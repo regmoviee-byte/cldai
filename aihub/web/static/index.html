@@ -259,6 +259,9 @@ tr:last-child td { border-bottom: 0; }
 .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 550; }
 .switch input { width: 18px; height: 18px; accent-color: var(--accent); }
 
+.agent-row { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-top: 10px; }
+.agent-row .hint code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-size: 12px; }
+
 /* misc */
 .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
 .err-box { background: var(--heavy-soft); color: var(--err); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 14px; white-space: pre-wrap; }
@@ -397,7 +400,8 @@ function renderPills() {
     if (!a.enabled) { cls = ""; title = "выключен"; }
     else if (d && !d.installed) { cls = "err"; title = "не установлен"; }
     else if (a.cooldown_until) { cls = "warn"; title = "квота кончилась до " + fmtDate(a.cooldown_until); }
-    return el("span", { class: "pill", title }, el("span", { class: "dot " + cls }), AGENT_NAME[name]);
+    return el("button", { class: "pill", title, style: "cursor:pointer", onclick: () => go("settings") },
+      el("span", { class: "dot " + cls }), AGENT_NAME[name]);
   });
   const theme = document.documentElement.dataset.theme;
   pills.push(el("button", {
@@ -449,6 +453,7 @@ function viewTask() {
   if (S.stage === "run") wrap.append(viewRun());
   else if (S.stage === "plan") wrap.append(viewPlan());
   else {
+    if (S.doctor && Object.values(S.doctor).every(i => !i.installed)) wrap.append(agentsCard());
     wrap.append(viewInput());
     if (S.stage === "manual") wrap.append(viewManual());
   }
@@ -820,6 +825,79 @@ function renderStats(r, reload) {
     el("p", { class: "hint", text: "Когда агент отвечает «лимит исчерпан», aihub сам ставит его на паузу и переключается на второго. Если квота почти кончилась, поставь паузу вручную, чтобы работа сразу уходила другому." }));
 }
 
+// ------------------------------------------------------------------ agents setup
+const AGENT_TITLE = { claude: "Claude Code", codex: "Codex CLI" };
+const AGENT_ABOUT = {
+  claude: "Консольная версия Claude. Работает по твоей подписке Claude, лимиты общие с приложением.",
+  codex: "Консольная версия ChatGPT для кода. Работает по твоей подписке ChatGPT.",
+};
+let doctorPoll = null;
+
+async function refreshDoctor() {
+  S.doctor = await api("/api/doctor?refresh=1");
+  renderPills();
+  document.querySelectorAll("[data-agents-card]").forEach(n => n.replaceWith(agentsCard()));
+  if (S.tab === "task" && S.stage === "input") render();
+  return S.doctor;
+}
+
+function watchDoctor(name, key) {
+  clearInterval(doctorPoll);
+  const until = Date.now() + 15 * 60 * 1000;
+  doctorPoll = setInterval(async () => {
+    try {
+      const d = await refreshDoctor();
+      if (d[name]?.[key] || Date.now() > until) clearInterval(doctorPoll);
+    } catch { clearInterval(doctorPoll); }
+  }, 5000);
+}
+
+async function agentAction(name, action) {
+  try {
+    const r = await api("/api/agent-action", { agent: name, action });
+    if (r.launched) {
+      toast(action === "install" ? "Открылось окно установки — следуй подсказкам в нём" : "Открылось окно входа");
+      if (action === "install") watchDoctor(name, "installed");
+    } else {
+      try { await navigator.clipboard.writeText(r.command); } catch {}
+      toast("Команда скопирована — выполни её в терминале");
+    }
+  } catch (e) { toast(e.message); }
+}
+
+function agentsCard() {
+  const d = S.doctor;
+  const missing = d ? Object.values(d).filter(i => !i.installed).length : 0;
+  const rows = !d ? [el("div", { class: "muted" }, el("span", { class: "spinner" }), "  Проверяю…")] :
+    Object.entries(d).map(([name, i]) => el("div", { class: "agent-row" },
+      el("div", { class: "row" },
+        el("span", { class: "dot " + (i.installed ? "ok" : "err") }),
+        el("b", { text: AGENT_TITLE[name] }),
+        el("span", { class: "muted", style: "font-size:13px", text: i.installed ? "установлен" : "не установлен" }),
+        el("span", { class: "grow" }),
+        i.installed
+          ? el("button", { class: "btn small", onclick: () => agentAction(name, "login") }, "Войти в аккаунт")
+          : el("button", { class: "btn primary small", onclick: () => agentAction(name, "install") }, "Установить")),
+      el("div", { class: "hint", style: "margin-top:4px" }, AGENT_ABOUT[name]),
+      i.installed
+        ? el("div", { class: "hint mono", style: "word-break:break-all", text: `${i.version || ""}  ${i.path}` })
+        : el("div", { class: "hint" },
+            i.can_launch ? "Кнопка откроет окно PowerShell с официальной установкой. " : "Выполни в терминале: ",
+            el("code", { class: "mono", style: "word-break:break-all", text: i.install_command }))));
+  return el("section", { class: "card", "data-agents-card": "" },
+    el("div", { class: "row" },
+      el("h2", { class: "grow", style: "margin:0", text: "Агенты" }),
+      el("button", { class: "btn small", onclick: async e => {
+        e.target.disabled = true;
+        try { await refreshDoctor(); toast("Проверено"); } catch (err) { toast(err.message); }
+        e.target.disabled = false;
+      } }, "Проверить ещё раз")),
+    el("p", { class: "sub", style: "margin-top:6px" },
+      "aihub раздаёт задачи консольным версиям Claude и ChatGPT. Приложениями Claude и ChatGPT на панели задач другая программа управлять не может, поэтому нужны консольные версии. Они работают по тем же подпискам: установи и один раз войди в аккаунт."),
+    rows,
+    d && missing === 0 && el("div", { class: "hint", text: "Оба агента на месте. Если задачи падают с ошибкой входа, нажми «Войти в аккаунт»." }));
+}
+
 // ------------------------------------------------------------------ settings
 function viewSettings() {
   const box = el("section", {}, el("div", { class: "empty" }, el("span", { class: "spinner" })));
@@ -842,7 +920,7 @@ function renderSettings(r) {
   const agentBlock = name => {
     const a = c.agents[name];
     const efforts = name === "claude" ? ["low", "medium", "high", "xhigh", "max"] : ["minimal", "low", "medium", "high", "xhigh"];
-    const models = name === "claude" ? ["haiku", "sonnet", "opus"] : [];
+    const models = name === "claude" ? ["haiku", "sonnet", "opus"] : ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
     const dl = "models-" + name, de = "efforts-" + name;
     return el("div", { class: "card" },
       el("div", { class: "row", style: "margin-bottom:14px" },
@@ -865,16 +943,8 @@ function renderSettings(r) {
             oninput: e => { a.tiers[t].effort = e.target.value; } })))))),
       el("datalist", { id: dl }, models.map(m => el("option", { value: m }))),
       el("datalist", { id: de }, efforts.map(m => el("option", { value: m }))),
-      name === "codex" && el("div", { class: "hint", text: "Пустая модель = модель по умолчанию из ~/.codex/config.toml. Названия моделей своего тарифа смотри в codex командой /model." }));
+      name === "codex" && el("div", { class: "hint", text: "Luna — дешёвая, Sol — основная, Astra — самая сильная и дорогая. Пустое поле = модель по умолчанию из настроек Codex." }));
   };
-
-  const doctorBox = el("div", {});
-  const renderDoctor = d => doctorBox.replaceChildren(...Object.entries(d).map(([name, i]) =>
-    el("div", { class: "row", style: "margin:6px 0" },
-      el("span", { class: "dot " + (i.installed ? "ok" : "err") }),
-      el("b", { text: AGENT_NAME[name] }),
-      el("span", { class: "muted mono", style: "font-size:13px", text: i.installed ? `${i.version || ""}  ${i.path}` : "не найден в PATH — установи и залогинься" }))));
-  if (S.doctor) renderDoctor(S.doctor);
 
   const saveBtn = el("button", { class: "btn primary" }, "Сохранить настройки");
   saveBtn.onclick = () => save(saveBtn, { values: {
@@ -886,6 +956,7 @@ function renderSettings(r) {
   rawBtn.onclick = () => save(rawBtn, { text: raw.value });
 
   return el("div", {},
+    agentsCard(),
     el("div", { class: "card" },
       el("h2", { text: "Основное" }),
       el("p", { class: "sub" }, "Файл настроек: ", el("span", { class: "mono", text: r.path })),
@@ -905,15 +976,6 @@ function renderSettings(r) {
       b.onclick = () => saveBtn.onclick();
       return b;
     })()),
-    el("div", { class: "card" },
-      el("div", { class: "row" },
-        el("h2", { class: "grow", style: "margin:0", text: "Проверка агентов" }),
-        (() => {
-          const b = el("button", { class: "btn small" }, "Проверить ещё раз");
-          b.onclick = async () => { b.disabled = true; try { S.doctor = await api("/api/doctor?refresh=1"); renderDoctor(S.doctor); renderPills(); } catch (e) { toast(e.message); } b.disabled = false; };
-          return b;
-        })()),
-      doctorBox),
     el("details", { class: "card" },
       el("summary", { style: "cursor:pointer;font-weight:600", text: "Для продвинутых: файл настроек целиком" }),
       el("p", { class: "hint", text: "Здесь можно задать всё, включая allowed_tools и extra_args. Описание каждого параметра — в комментариях к настройкам по умолчанию." }),
@@ -942,7 +1004,10 @@ async function boot() {
     if (id) { S.job = { id }; S.stage = "run"; S.tab = "task"; renderTabs(); await poll(); }
   }
   render();
-  api("/api/doctor").then(d => { S.doctor = d; renderPills(); }).catch(() => {});
+  api("/api/doctor").then(d => {
+    S.doctor = d; renderPills();
+    if ((S.tab === "task" && S.stage === "input") || S.tab === "settings") render();
+  }).catch(() => {});
 }
 boot();
 </script>

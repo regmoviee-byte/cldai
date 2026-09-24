@@ -19,7 +19,7 @@ class PlanError(Exception):
 PLANNER_PROMPT = """\
 You are a cost-aware router for two coding agents that run on limited weekly subscription quotas:
 - "claude" = Claude Code. Tiers: light=Haiku, medium=Sonnet, heavy=Opus.
-- "codex"  = OpenAI Codex CLI. Tiers: light/medium/heavy = cheap model/low reasoning ... strong model/high reasoning.
+- "codex"  = OpenAI Codex CLI. Tiers: light=GPT-6 Luna, medium=GPT-6 Sol, heavy=GPT-6 Astra.
 
 Your job: split the TASK into the smallest sensible number of subtasks (1 is fine for small tasks,
 rarely more than 6) and give each one the CHEAPEST tier that will still do it right.

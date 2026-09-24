@@ -67,17 +67,16 @@ command = "codex"
 sandbox = "workspace-write"
 extra_args = []
 
-# model = "" → модель по умолчанию из ~/.codex/config.toml, экономим через reasoning effort.
-# Лучше впиши сюда реальные названия лёгкой/средней/тяжёлой модели со своего тарифа
-# (посмотреть: запусти `codex` и набери /model).
+# GPT-6: Luna — дешёвая (в 20 раз дешевле Sol), Sol — основная, Astra — самая сильная и дорогая.
+# model = "" → модель по умолчанию из ~/.codex/config.toml. Список моделей: `codex`, затем /model.
 [agents.codex.tiers.light]
-model = ""
+model = "gpt-6-luna"
 effort = "low"
 
 [agents.codex.tiers.medium]
-model = ""
+model = "gpt-6-sol"
 effort = "medium"
 
 [agents.codex.tiers.heavy]
-model = ""
+model = "gpt-6-astra"
 effort = "high"

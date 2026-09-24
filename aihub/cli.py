@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .agents import make_agents
+from .agents import find_executable, make_agents
 from . import service
 from .config import AGENTS, DEFAULT_CONFIG_PATH, TIERS, ConfigError, hub_home, load
 from .executor import Executor, available_agents, reroute
@@ -227,12 +227,12 @@ def cmd_doctor(args) -> int:
     for name, agent in agents.items():
         cmd = agent.cfg.get("command", name)
         exe = (cmd if isinstance(cmd, list) else cmd.split())[0]
-        path = shutil.which(exe)
+        path = find_executable(exe)
         if not agent.enabled:
             print(f"{name}: disabled in config")
             continue
         if not path:
-            print(f"{name}: ✗ `{exe}` not found in PATH")
+            print(f"{name}: ✗ `{exe}` not found (install it and log in; `aihub ui` has an install button)")
             rc = 1
             continue
         try:

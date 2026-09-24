@@ -101,6 +101,19 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual([t["id"] for t in plan["tasks"]], ["t1", "t2"])
 
 
+class LookupTests(unittest.TestCase):
+    def test_finds_cli_in_known_location_off_path(self):
+        from aihub import agents
+        with tempfile.TemporaryDirectory() as d:
+            exe = Path(d) / ".local" / "bin" / ("claude.exe" if os.name == "nt" else "claude")
+            exe.parent.mkdir(parents=True)
+            exe.write_text("")
+            with mock.patch.object(Path, "home", return_value=Path(d)), \
+                 mock.patch.dict(os.environ, {"PATH": ""}):
+                self.assertEqual(agents.find_executable("claude"), str(exe))
+                self.assertIsNone(agents.find_executable("codex"))
+
+
 class AgentTests(Base):
     def test_claude_command_and_usage(self):
         res = make_agents(self.cfg)["claude"].run("hello", "light", self.tmp)
@@ -118,7 +131,7 @@ class AgentTests(Base):
         args = self.calls()[0]["args"]
         self.assertEqual(args[args.index("-s") + 1], "read-only")
         self.assertIn("model_reasoning_effort=high", args)
-        self.assertNotIn("-m", args)  # empty model → codex default
+        self.assertEqual(args[args.index("-m") + 1], "gpt-6-astra")
 
     def test_rate_limit_detected(self):
         os.environ["FAKE_CODEX_LIMIT"] = "1"
@@ -300,6 +313,18 @@ class WebTests(Base):
         job = self.wait_job(data["job"]["id"])
         self.assertEqual(job["state"], "cancelled")
         self.assertEqual([t["status"] for t in job["tasks"]], ["cancelled", "cancelled"])
+
+    def test_agent_actions(self):
+        status, data = self.req("/api/agent-action", {"agent": "codex", "action": "install"})
+        self.assertEqual(status, 200, data)
+        self.assertFalse(data["launched"])  # not Windows: UI shows the command instead
+        self.assertIn("npm install -g @openai/codex", data["command"])
+        status, data = self.req("/api/agent-action", {"agent": "claude", "action": "login"})
+        self.assertIn("fake_claude.py", data["command"])
+        self.assertEqual(self.req("/api/agent-action", {"agent": "claude", "action": "rm -rf"})[0], 400)
+        doctor = self.req("/api/doctor?refresh=1")[1]
+        self.assertTrue(doctor["claude"]["installed"])
+        self.assertIn("install_command", doctor["codex"])
 
     def test_second_launch_detects_running_instance(self):
         from aihub.web.server import already_running

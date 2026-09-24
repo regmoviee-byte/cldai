@@ -46,6 +46,23 @@ jobs:
           Write-Host "state: planner=$($state.planner) agents=$($state.agents.PSObject.Properties.Name -join ',')"
           $p2 = Start-Process dist\aihub.exe -ArgumentList "--no-browser","--port","8799" -PassThru -Wait
           if ($p2.ExitCode -ne 0) { throw "second launch exited with $($p2.ExitCode)" }
+
+          # The "Установить" buttons: install both CLIs through the UI API and wait until
+          # aihub finds them (PATH refresh / known install locations), like a fresh user would.
+          $h = @{ "X-Aihub-Token" = $token }
+          foreach ($a in "claude", "codex") {
+            $r = Invoke-RestMethod http://127.0.0.1:8799/api/agent-action -Method Post -Headers $h `
+              -ContentType "application/json" -Body (@{ agent = $a; action = "install" } | ConvertTo-Json)
+            if (-not $r.launched) { throw "install window for $a was not launched" }
+          }
+          $found = $false
+          for ($i = 0; $i -lt 60 -and -not $found; $i++) {
+            Start-Sleep 5
+            $d = Invoke-RestMethod "http://127.0.0.1:8799/api/doctor?refresh=1" -Headers $h
+            Write-Host "claude=$($d.claude.installed) $($d.claude.version) | codex=$($d.codex.installed) $($d.codex.version)"
+            $found = $d.claude.installed -and $d.codex.installed
+          }
+          if (-not $found) { throw "agents not detected after install" }
           Stop-Process -Id $p.Id -Force
           Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*aihub*" } | Stop-Process -Force
 

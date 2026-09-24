@@ -19,9 +19,9 @@
 
 | тир    | Claude Code      | Codex                         | для чего |
 |--------|------------------|-------------------------------|----------|
-| light  | haiku, effort low | модель по умолчанию, reasoning low | переименования, доки, конфиги, мелкие правки, «найди где…» |
-| medium | sonnet, medium   | reasoning medium              | обычная фича/багфикс, тесты, ревью |
-| heavy  | opus, high       | reasoning high                | архитектура, мутный дебаг, гонки, безопасность |
+| light  | haiku, effort low | GPT-6 Luna, reasoning low | переименования, доки, конфиги, мелкие правки, «найди где…» |
+| medium | sonnet, medium   | GPT-6 Sol, reasoning medium | обычная фича/багфикс, тесты, ревью |
+| heavy  | opus, high       | GPT-6 Astra, reasoning high | архитектура, мутный дебаг, гонки, безопасность |
 
 Всё меняется в конфиге.
 
@@ -162,14 +162,14 @@ parallel = 2            # независимые шаги параллельно
 permission_mode = "acceptEdits"
 allowed_tools = ["Bash(npm test:*)", "Bash(git diff:*)"]
 
-[agents.codex.tiers.light]
-model = "<лёгкая модель со своего тарифа>"   # посмотри в codex: /model
-effort = "low"
+[agents.codex.tiers.medium]
+model = "gpt-6-luna"    # сделать средний уровень Codex ещё дешевле
+effort = "high"
 ```
 
-У Codex по умолчанию модель не задана (берётся из `~/.codex/config.toml`), а экономия идёт за счёт
-`model_reasoning_effort`. Если впишешь в тиры реальные лёгкую и тяжёлую модели своего тарифа,
-сэкономишь ещё больше.
+Модели Codex по уровням: Luna (в 20 раз дешевле Sol) → Sol → Astra (в 5 раз дороже Sol). Если
+в твоём тарифе другие названия, посмотри их в `codex` командой `/model`. Пустое `model = ""`
+значит модель по умолчанию из `~/.codex/config.toml`.
 
 ## Права агентов
 

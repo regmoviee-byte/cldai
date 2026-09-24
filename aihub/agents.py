@@ -37,6 +37,53 @@ class Result:
     cost_usd: float = 0.0
 
 
+def _registry_path() -> list[str]:
+    """PATH as currently stored in the Windows registry (machine + user)."""
+    import winreg
+    parts: list[str] = []
+    for root, key in ((winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(root, key) as k:
+                value, _ = winreg.QueryValueEx(k, "Path")
+        except OSError:
+            continue
+        parts += [os.path.expandvars(p) for p in str(value).split(os.pathsep) if p]
+    return parts
+
+
+def refresh_path() -> None:
+    """Pick up PATH entries added after aihub started (e.g. the user just installed claude)."""
+    if os.name != "nt":
+        return
+    current = os.environ.get("PATH", "").split(os.pathsep)
+    extra = [p for p in _registry_path() if p not in current]
+    if extra:
+        os.environ["PATH"] = os.pathsep.join(current + extra)
+
+
+def known_locations(name: str) -> list[Path]:
+    """Where the official installers put the CLIs, in case that folder isn't on PATH."""
+    home = Path.home()
+    if os.name == "nt":
+        appdata = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+        return [home / ".local" / "bin" / f"{name}.exe", appdata / "npm" / f"{name}.cmd",
+                home / ".claude" / "local" / f"{name}.exe"]
+    return [home / ".local" / "bin" / name, home / ".claude" / "local" / name,
+            home / ".npm-global" / "bin" / name, Path("/opt/homebrew/bin") / name,
+            Path("/usr/local/bin") / name]
+
+
+def find_executable(name: str) -> str | None:
+    if os.sep in name or (os.altsep and os.altsep in name):
+        return name if Path(name).is_file() else None
+    refresh_path()
+    found = shutil.which(name)
+    if found:
+        return found
+    return next((str(p) for p in known_locations(name) if p.is_file()), None)
+
+
 def _command(value) -> list[str]:
     return list(value) if isinstance(value, list) else shlex.split(value)
 
@@ -73,8 +120,8 @@ class Agent:
         with tempfile.TemporaryDirectory(prefix="aihub-") as tmp:
             out_file = Path(tmp) / "last_message.txt"
             cmd = self.build_cmd(tier, workdir, text_only, out_file)
-            # On Windows the CLIs are .cmd shims that Popen won't find by bare name.
-            cmd[0] = shutil.which(cmd[0]) or cmd[0]
+            # Resolve .cmd shims (Popen won't find them by bare name) and installs off PATH.
+            cmd[0] = find_executable(cmd[0]) or cmd[0]
             start = time.monotonic()
             try:
                 popen = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
