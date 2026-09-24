@@ -8,6 +8,12 @@ import os
 import sys
 
 args = sys.argv[1:]
+if args[:1] == ["--version"]:
+    print("codex-cli 9.9.9")
+    sys.exit(0)
+if args[:1] == ["login"]:
+    print("Logged in using ChatGPT" if not os.environ.get("FAKE_LOGGED_OUT") else "Not logged in")
+    sys.exit(1 if os.environ.get("FAKE_LOGGED_OUT") else 0)
 prompt = sys.stdin.read()
 out_file = args[args.index("-o") + 1]
 

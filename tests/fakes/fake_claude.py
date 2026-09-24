@@ -10,6 +10,15 @@ import os
 import sys
 
 args = sys.argv[1:]
+if args[:1] == ["--version"]:
+    print("9.9.9 (Fake Claude)")
+    sys.exit(0)
+if args[:2] == ["auth", "status"]:
+    print(json.dumps({"loggedIn": not os.environ.get("FAKE_LOGGED_OUT")}))
+    sys.exit(0)
+if args[:2] == ["auth", "login"]:
+    print("Opening browser to sign in…")
+    sys.exit(0)
 prompt = sys.stdin.read()
 model = args[args.index("--model") + 1] if "--model" in args else ""
 

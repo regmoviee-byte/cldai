@@ -249,7 +249,8 @@ def cmd_doctor(args) -> int:
 def cmd_ui(args) -> int:
     from .web.server import serve
     return serve(args.config, port=args.port, open_browser=not args.no_browser,
-                 workdir=Path(args.workdir).resolve() if args.workdir else Path.cwd())
+                 workdir=Path(args.workdir).resolve() if args.workdir else Path.cwd(),
+                 announce=args.announce, idle_exit=args.idle_exit)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -308,6 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("ui", help="open the web interface in your browser")
     sp.add_argument("--port", type=int, default=8765)
     sp.add_argument("--no-browser", action="store_true")
+    sp.add_argument("--announce", action="store_true", help=argparse.SUPPRESS)  # desktop launcher
+    sp.add_argument("--idle-exit", type=float, default=0, help=argparse.SUPPRESS)
     sp.add_argument("-C", "--workdir", help="default project directory")
     sp.set_defaults(func=cmd_ui)
 

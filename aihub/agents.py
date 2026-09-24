@@ -126,7 +126,8 @@ class Agent:
             try:
                 popen = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, text=True, cwd=workdir,
-                                         encoding="utf-8", errors="replace", env=os.environ.copy())
+                                         encoding="utf-8", errors="replace", env=os.environ.copy(),
+                                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except (FileNotFoundError, NotADirectoryError) as e:
                 return Result(False, "", self.name, tier, self.model_label(tier),
                               error=f"cannot start {cmd[0]}: {e}")

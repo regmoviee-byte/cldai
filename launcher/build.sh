@@ -31,16 +31,15 @@ find "$RT" -name __pycache__ -type d -prune -exec rm -rf {} +
 rm -f payload.zip
 "$PY" -c "import shutil, sys; shutil.make_archive('payload', 'zip', root_dir=sys.argv[1])" "$RT"
 
-echo "==> icon and version resources"
-export GOFLAGS=-mod=mod GOSUMDB=off
-go run github.com/tc-hib/go-winres@v0.3.3 simply \
-  --arch amd64 --icon icon.png --manifest cli \
-  --product-name aihub --file-description "aihub — Claude ⇄ Codex" \
-  --product-version "$APP_VERSION.0" --file-version "$APP_VERSION.0" \
-  --original-filename aihub.exe --copyright "MIT"
+echo "==> icon, manifest and version resources"
+export GOFLAGS=-mod=mod GOSUMDB=off GOTOOLCHAIN=local
+go run github.com/tc-hib/go-winres@v0.3.3 make --in winres/winres.json --arch amd64 \
+  --product-version "$APP_VERSION.0" --file-version "$APP_VERSION.0"
 
 echo "==> go build"
 mkdir -p ../dist
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o ../dist/aihub.exe .
+# -H windowsgui: a desktop app, no console window.
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" \
+  -o ../dist/aihub.exe .
 rm -f payload.zip rsrc_windows_*.syso
 ls -lh ../dist/aihub.exe

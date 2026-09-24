@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .. import __version__, service
+from .. import __version__, agent_setup, service
 from ..agents import find_executable, make_agents
 from ..config import (AGENTS, DEFAULT_CONFIG_PATH, TIERS, ConfigError, deep_merge, dump_toml,
                       hub_home, load, save_user_config, user_config_path)
@@ -33,49 +33,6 @@ from ..ledger import Ledger
 from ..planner import PlanError
 
 STATIC = Path(__file__).with_name("static")
-
-
-AGENT_TITLES = {"claude": "Claude Code", "codex": "Codex CLI"}
-
-# Official install commands. Windows ones run in PowerShell; Codex needs Node.js, which we
-# install with winget first when npm is missing.
-INSTALL = {
-    "windows": {
-        "claude": "irm https://claude.ai/install.ps1 | iex",
-        "codex": ("if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { "
-                  "winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements "
-                  "--accept-package-agreements; $env:Path = "
-                  "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + "
-                  "[Environment]::GetEnvironmentVariable('Path','User') }; "
-                  "npm install -g @openai/codex"),
-    },
-    "unix": {
-        "claude": "curl -fsSL https://claude.ai/install.sh | bash",
-        "codex": "npm install -g @openai/codex",
-    },
-}
-
-LOGIN_HINTS = {
-    "claude": "Сейчас запустится Claude Code. Выбери вход через подписку Claude и подтверди в "
-              "браузере. Когда увидишь приглашение ввода, набери /exit.",
-    "codex": "Сейчас откроется браузер: войди в свой аккаунт ChatGPT.",
-}
-
-
-def _os_key() -> str:
-    return "windows" if os.name == "nt" else "unix"
-
-
-def _ps_quote(text: str) -> str:
-    return "'" + text.replace("'", "''") + "'"
-
-
-def login_command(name: str, cmd: list[str]) -> str:
-    """Shell text that starts the agent's login flow; cmd is the resolved agent command."""
-    parts = cmd + ([] if name == "claude" else ["login"])
-    if os.name == "nt":
-        return "& " + " ".join(_ps_quote(x) for x in parts)
-    return shlex.join(parts)
 
 
 class ApiError(Exception):
@@ -133,6 +90,9 @@ class App:
         self.token = secrets.token_urlsafe(24)
         self.jobs: dict[str, Job] = {}
         self._doctor: dict | None = None
+        self.actions = agent_setup.ActionRunner(hub_home() / "logs")
+        self.last_ping = time.time()
+        self.httpd = None
         self.reload()
 
     def reload(self) -> None:
@@ -172,63 +132,67 @@ class App:
         cmd = self.agents[name].cfg.get("command", name)
         return list(cmd) if isinstance(cmd, list) else shlex.split(cmd)
 
-    def _exe(self, name: str) -> str:
-        return self._command(name)[0]
+    def _resolved(self, name: str) -> list[str] | None:
+        cmd = self._command(name)
+        path = find_executable(cmd[0])
+        return [path, *cmd[1:]] if path else None
 
     def doctor(self, q) -> dict:
+        """Per agent: installed? logged in? plus any running/finished install or login."""
         if self._doctor is None or q.get("refresh"):
             out = {}
             for name in self.agents:
-                path = find_executable(self._exe(name))
-                info = {"installed": bool(path), "path": path, "version": "",
-                        "install_command": INSTALL[_os_key()][name],
-                        "can_launch": os.name == "nt"}
-                if path:
-                    try:
-                        info["version"] = subprocess.run(
-                            [path, "--version"], capture_output=True, text=True, timeout=20,
-                            stdin=subprocess.DEVNULL,
-                        ).stdout.strip().splitlines()[0]
-                    except (subprocess.SubprocessError, OSError, IndexError):
-                        pass
-                out[name] = info
+                cmd = self._resolved(name)
+                out[name] = {"installed": bool(cmd), "path": cmd[0] if cmd else None,
+                             "version": agent_setup.version(cmd) if cmd else "",
+                             "logged_in": agent_setup.logged_in(name, cmd) if cmd else None,
+                             "install_command": agent_setup.INSTALL[agent_setup.os_key()][name]}
             self._doctor = out
-        return self._doctor
+        return {name: {**info, "action": self.actions.status(name)}
+                for name, info in self._doctor.items()}
 
     def agent_action(self, body: dict) -> dict:
-        """Install or log in to an agent CLI in a new, visible console window (Windows).
+        """Start an install or login in the background (no console window).
 
-        Commands are fixed strings (plus the resolved exe path); nothing from the request
-        body reaches the shell except the agent/action names, which are whitelisted.
+        Only whitelisted agent/action names come from the request; the commands are fixed.
         """
         name, action = body.get("agent"), body.get("action")
         if name not in AGENTS or action not in ("install", "login"):
             raise ApiError("unknown agent or action")
         if action == "install":
-            command = INSTALL[_os_key()][name]
-            banner = f"Устанавливаю {AGENT_TITLES[name]}…"
+            argv = agent_setup.install_argv(name)
         else:
-            cmd = self._command(name)
-            path = find_executable(cmd[0])
-            if not path:
-                raise ApiError(f"{AGENT_TITLES[name]} ещё не установлен")
-            command = login_command(name, [path, *cmd[1:]])
-            banner = LOGIN_HINTS[name]
-        if os.name != "nt":
-            return {"launched": False, "command": command}
-        done = "Готово. Вернись в aihub и нажми «Проверить ещё раз». Это окно можно закрыть."
-        log = Path(os.environ.get("TEMP", ".")) / f"aihub-{action}-{name}.log"
-        # Windows PowerShell's download progress bar slows Invoke-WebRequest down by an order of
-        # magnitude (a 240 MB download looks hung), so switch it off.
-        script = (f"$ProgressPreference = 'SilentlyContinue'; "
-                  f"Start-Transcript -Path {_ps_quote(str(log))} -Force | Out-Null; "
-                  f"Write-Host {_ps_quote(banner)} -ForegroundColor Cyan; {command}; "
-                  f"Write-Host ''; Write-Host {_ps_quote(done)} -ForegroundColor Green; "
-                  f"Stop-Transcript | Out-Null")
-        subprocess.Popen(["powershell.exe", "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                          "-Command", script], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            cmd = self._resolved(name)
+            if not cmd:
+                raise ApiError(f"{agent_setup.TITLES[name]} ещё не установлен")
+            argv = agent_setup.login_argv(name, cmd)
         self._doctor = None
-        return {"launched": True, "command": command}
+        return {"action": self.actions.start(name, action, argv)}
+
+    def ping(self, _q) -> dict:
+        self.last_ping = time.time()
+        return {"ok": True}
+
+    def open_url(self, body: dict) -> dict:
+        url = str(body.get("url", ""))
+        if not url.startswith(("https://", "http://")):
+            raise ApiError("only http(s) links")
+        webbrowser.open(url)
+        return {"ok": True}
+
+    def shutdown(self, _body: dict) -> dict:
+        """Called by the desktop launcher when its window closes: stop agents, then exit."""
+        for job in self.jobs.values():
+            if job.executor and job.state == "running":
+                job.executor.cancel()
+        self.actions.stop_all()
+        if self.httpd is not None:
+            threading.Timer(0.3, self.httpd.shutdown).start()
+        return {"ok": True}
+
+    def busy(self) -> bool:
+        return (any(j.state == "running" for j in self.jobs.values())
+                or any((self.actions.status(n) or {}).get("state") == "running" for n in AGENTS))
 
     def plan(self, body: dict) -> dict:
         task = (body.get("task") or "").strip()
@@ -370,11 +334,13 @@ class App:
 def make_handler(app: App, port: int):
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     get_routes = {"/api/state": app.state, "/api/doctor": app.doctor, "/api/stats": app.stats,
+                  "/api/ping": app.ping,
                   "/api/history": app.history, "/api/history/detail": app.history_detail,
                   "/api/settings": app.settings}
     post_routes = {"/api/plan": app.plan, "/api/plan/parse": app.parse_plan, "/api/run": app.run,
                    "/api/cooldown": app.cooldown, "/api/settings": app.save_settings,
-                   "/api/agent-action": app.agent_action}
+                   "/api/agent-action": app.agent_action, "/api/open-url": app.open_url,
+                   "/api/shutdown": app.shutdown}
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "aihub"
@@ -483,30 +449,46 @@ def create_server(config_path, port: int, workdir: Path) -> tuple[ThreadingHTTPS
     app = App(config_path, workdir)
     httpd = _Server(("127.0.0.1", port), None)
     httpd.RequestHandlerClass = make_handler(app, httpd.server_address[1])
+    app.httpd = httpd
     return httpd, app
 
 
 def serve(config_path=None, port: int = 8765, open_browser: bool = True,
-          workdir: Path | None = None) -> int:
+          workdir: Path | None = None, announce: bool = False, idle_exit: float = 0) -> int:
+    """announce: print "AIHUB_URL <url>" for the desktop launcher (which then shows its own
+    window). idle_exit: quit after that many seconds with no page open and nothing running."""
     url = f"http://127.0.0.1:{port}/"
     if port and already_running(port):
         print(f"aihub уже запущен: {url}")
-        if open_browser:
+        if announce:
+            print(f"AIHUB_URL {url}", flush=True)
+        elif open_browser:
             webbrowser.open(url)
         return 0
     try:
-        httpd, _ = create_server(config_path, port, workdir or Path.cwd())
+        httpd, app = create_server(config_path, port, workdir or Path.cwd())
     except ConfigError as e:
-        print(f"config error: {e}")
+        print(f"config error: {e}", flush=True)
         return 1
     except OSError as e:
-        print(f"cannot listen on 127.0.0.1:{port}: {e} (try --port)")
+        print(f"cannot listen on 127.0.0.1:{port}: {e} (try --port)", flush=True)
         return 1
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
-    print(f"aihub работает: {url}\n"
-          "Не закрывай это окно, пока пользуешься aihub. Закрыть окно или Ctrl+C — остановить.")
-    if open_browser:
+    if announce:
+        print(f"AIHUB_TOKEN {app.token}\nAIHUB_URL {url}", flush=True)
+    else:
+        print(f"aihub работает: {url}\n"
+              "Не закрывай это окно, пока пользуешься aihub. Закрыть окно или Ctrl+C — остановить.")
+    if open_browser and not announce:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+    if idle_exit:
+        def watchdog():
+            while True:
+                time.sleep(min(30, idle_exit))
+                if not app.busy() and time.time() - app.last_ping > idle_exit:
+                    httpd.shutdown()
+                    return
+        threading.Thread(target=watchdog, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -1,5 +1,6 @@
 // aihub launcher: a single executable that carries a private Python runtime plus the aihub
-// package, unpacks them once into the user's app-data folder and starts the web UI.
+// package, unpacks them once into the user's app-data folder, starts the aihub server in the
+// background and shows it in a window (Windows: a native WebView2 window, see app_windows.go).
 // Built by build.sh; payload.zip is generated there and not committed.
 package main
 
@@ -12,12 +13,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 //go:embed payload.zip
@@ -85,7 +87,6 @@ func ensureRuntime() (string, error) {
 	if _, err := os.Stat(filepath.Join(dir, ".complete")); err == nil {
 		return dir, nil
 	}
-	fmt.Println("Первый запуск: распаковываю aihub, это займёт несколько секунд…")
 	tmp := fmt.Sprintf("%s.tmp-%d", dir, os.Getpid())
 	os.RemoveAll(tmp)
 	if err := unzip(payload, tmp); err != nil {
@@ -113,19 +114,17 @@ func ensureRuntime() (string, error) {
 	return dir, nil
 }
 
-func fail(msg string, err error) {
-	fmt.Printf("\n%s: %v\n", msg, err)
-	fmt.Println("Нажми Enter, чтобы закрыть окно.")
-	bufio.NewReader(os.Stdin).ReadString('\n')
-	os.Exit(1)
+// server is the background aihub process.
+type server struct {
+	cmd   *exec.Cmd
+	url   string
+	token string
+	log   string
 }
 
-func main() {
-	dir, err := ensureRuntime()
-	if err != nil {
-		fail("Не получилось распаковать aihub", err)
-	}
-
+// startServer runs `python -m aihub ui --announce` hidden and waits for it to print its
+// address. Everything the server prints goes to aihub.log in the data folder.
+func startServer(dir string, extraArgs []string, prepare func(*exec.Cmd)) (*server, error) {
 	python := filepath.Join(dir, "python.exe")
 	env := []string{}
 	for _, kv := range os.Environ() {
@@ -135,24 +134,99 @@ func main() {
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "PYTHONUTF8=1", "PYTHONNOUSERSITE=1")
+	env = append(env, "PYTHONUTF8=1", "PYTHONNOUSERSITE=1", "PYTHONUNBUFFERED=1")
 	if runtime.GOOS != "windows" { // dev/test builds: use the system python with our package
 		python = "python3"
 		env = append(env, "PYTHONPATH="+filepath.Join(dir, "Lib", "site-packages"))
 	}
 
-	cmd := exec.Command(python, append([]string{"-m", "aihub", "ui"}, os.Args[1:]...)...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	args := append([]string{"-m", "aihub", "ui", "--announce", "--no-browser", "--port", "0",
+		"--idle-exit", "600"}, extraArgs...)
+	cmd := exec.Command(python, args...)
 	cmd.Env = env
 	if home, err := os.UserHomeDir(); err == nil {
 		cmd.Dir = home
 	}
-	// Ctrl+C goes to Python too; the launcher just waits for it to shut down.
-	signal.Ignore(os.Interrupt)
-	if err := cmd.Run(); err != nil {
-		if _, ok := err.(*exec.ExitError); ok && cmd.ProcessState.ExitCode() == 0xC000013A {
-			return // STATUS_CONTROL_C_EXIT
-		}
-		fail("aihub завершился с ошибкой", err)
+	logPath := filepath.Join(dataDir(), "aihub.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		return nil, err
 	}
+	cmd.Stderr = logFile
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if prepare != nil {
+		prepare(cmd)
+	}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return nil, err
+	}
+
+	s := &server{cmd: cmd, log: logPath}
+	ready := make(chan struct{})
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			line := sc.Text()
+			switch {
+			case strings.HasPrefix(line, "AIHUB_TOKEN "):
+				s.token = strings.TrimPrefix(line, "AIHUB_TOKEN ")
+			case strings.HasPrefix(line, "AIHUB_URL ") && s.url == "":
+				s.url = strings.TrimPrefix(line, "AIHUB_URL ")
+				fmt.Fprintln(logFile, line)
+				close(ready)
+			default:
+				fmt.Fprintln(logFile, line)
+			}
+		}
+		logFile.Close()
+	}()
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	select {
+	case <-ready:
+		go func() { <-exited }() // reap
+		return s, nil
+	case err := <-exited:
+		return nil, fmt.Errorf("server stopped: %v\n\n%s", err, tail(logPath))
+	case <-time.After(90 * time.Second):
+		cmd.Process.Kill()
+		return nil, fmt.Errorf("server did not start in time\n\n%s", tail(logPath))
+	}
+}
+
+// stop asks the server to cancel running agents and exit, then makes sure it is gone.
+func (s *server) stop() {
+	if s.token != "" {
+		req, _ := http.NewRequest("POST", s.url+"api/shutdown", strings.NewReader("{}"))
+		req.Header.Set("X-Aihub-Token", s.token)
+		req.Header.Set("Content-Type", "application/json")
+		client := http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) && s.cmd.ProcessState == nil {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if s.cmd.ProcessState == nil {
+		s.cmd.Process.Kill()
+	}
+}
+
+func tail(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) > 15 {
+		lines = lines[len(lines)-15:]
+	}
+	return strings.Join(lines, "\n")
 }

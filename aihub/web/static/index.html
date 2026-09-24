@@ -337,6 +337,11 @@ function el(tag, props, ...kids) {
   return n;
 }
 
+// In the desktop app the page lives in an embedded browser; links go to the user's browser.
+async function openExternal(url) {
+  try { await api("/api/open-url", { url }); } catch { window.open(url, "_blank", "noopener"); }
+}
+
 function toast(msg) {
   const t = document.getElementById("toast");
   t.textContent = msg; t.classList.add("show");
@@ -399,6 +404,7 @@ function renderPills() {
     let cls = "ok", title = "готов";
     if (!a.enabled) { cls = ""; title = "выключен"; }
     else if (d && !d.installed) { cls = "err"; title = "не установлен"; }
+    else if (d && d.logged_in === false) { cls = "warn"; title = "нужно войти в аккаунт"; }
     else if (a.cooldown_until) { cls = "warn"; title = "квота кончилась до " + fmtDate(a.cooldown_until); }
     return el("button", { class: "pill", title, style: "cursor:pointer", onclick: () => go("settings") },
       el("span", { class: "dot " + cls }), AGENT_NAME[name]);
@@ -453,7 +459,7 @@ function viewTask() {
   if (S.stage === "run") wrap.append(viewRun());
   else if (S.stage === "plan") wrap.append(viewPlan());
   else {
-    if (S.doctor && Object.values(S.doctor).every(i => !i.installed)) wrap.append(agentsCard());
+    if (S.doctor && !Object.values(S.doctor).some(agentReady)) wrap.append(agentsCard());
     wrap.append(viewInput());
     if (S.stage === "manual") wrap.append(viewManual());
   }
@@ -529,7 +535,7 @@ function viewManual() {
             try { await navigator.clipboard.writeText(S.manualPrompt); toast("Промпт скопирован"); }
             catch { toast("Не получилось — выдели текст ниже и скопируй вручную"); }
           } }, "Скопировать промпт"),
-          el("a", { class: "btn small", href: "https://chatgpt.com/", target: "_blank", rel: "noopener" }, "Открыть ChatGPT ↗")),
+          el("a", { class: "btn small", href: "https://chatgpt.com/", onclick: e => { e.preventDefault(); openExternal("https://chatgpt.com/"); } }, "Открыть ChatGPT ↗")),
         el("details", {}, el("summary", { class: "muted", style: "cursor:pointer;font-size:13px;margin-top:8px", text: "Показать промпт" }),
           el("pre", { class: "box", text: S.manualPrompt })))),
       el("div", {}, el("div", {},
@@ -831,59 +837,74 @@ const AGENT_ABOUT = {
   claude: "Консольная версия Claude. Работает по твоей подписке Claude, лимиты общие с приложением.",
   codex: "Консольная версия ChatGPT для кода. Работает по твоей подписке ChatGPT.",
 };
+const agentReady = i => i.installed && i.logged_in !== false;
 let doctorPoll = null;
 
-async function refreshDoctor() {
-  S.doctor = await api("/api/doctor?refresh=1");
+async function refreshDoctor(full = true) {
+  S.doctor = await api("/api/doctor" + (full ? "?refresh=1" : ""));
   renderPills();
   document.querySelectorAll("[data-agents-card]").forEach(n => n.replaceWith(agentsCard()));
-  if (S.tab === "task" && S.stage === "input") render();
   return S.doctor;
 }
 
-function watchDoctor(name, key) {
-  clearInterval(doctorPoll);
-  const until = Date.now() + 15 * 60 * 1000;
+// While an install/login is in flight poll cheaply; when it ends, re-check the CLIs once.
+// (`claude auth login` / `codex login` exit only after the browser sign-in completes.)
+function watchActions() {
+  if (doctorPoll) return;
   doctorPoll = setInterval(async () => {
     try {
-      const d = await refreshDoctor();
-      if (d[name]?.[key] || Date.now() > until) clearInterval(doctorPoll);
-    } catch { clearInterval(doctorPoll); }
-  }, 5000);
+      const d = await refreshDoctor(false);
+      if (Object.values(d).some(i => i.action?.state === "running")) return;
+      clearInterval(doctorPoll); doctorPoll = null;
+      await refreshDoctor(true);
+      if (S.tab === "task" && S.stage === "input") render();
+    } catch { clearInterval(doctorPoll); doctorPoll = null; }
+  }, 2000);
 }
 
 async function agentAction(name, action) {
   try {
-    const r = await api("/api/agent-action", { agent: name, action });
-    if (r.launched) {
-      toast(action === "install" ? "Открылось окно установки — следуй подсказкам в нём" : "Открылось окно входа");
-      if (action === "install") watchDoctor(name, "installed");
-    } else {
-      try { await navigator.clipboard.writeText(r.command); } catch {}
-      toast("Команда скопирована — выполни её в терминале");
-    }
+    await api("/api/agent-action", { agent: name, action });
+    toast(action === "install" ? "Устанавливаю… Обычно это 1–3 минуты" : "Открываю браузер — войди в аккаунт");
+    await refreshDoctor(false);
+    watchActions();
   } catch (e) { toast(e.message); }
+}
+
+function agentRow(name, i) {
+  const act = i.action;
+  const running = act?.state === "running";
+  let status, cls, button = null;
+  if (running && act.action === "install") { status = "устанавливаю…"; cls = "warn"; }
+  else if (running) { status = "жду входа в браузере…"; cls = "warn"; }
+  else if (!i.installed) {
+    status = "не установлен"; cls = "err";
+    button = el("button", { class: "btn primary small", onclick: () => agentAction(name, "install") }, "Установить");
+  } else if (i.logged_in === false) {
+    status = "нужно войти в аккаунт"; cls = "warn";
+    button = el("button", { class: "btn primary small", onclick: () => agentAction(name, "login") }, "Войти");
+  } else {
+    status = "готов"; cls = "ok";
+    button = el("button", { class: "btn small", onclick: () => agentAction(name, "login") }, "Войти заново");
+  }
+  const failed = act?.state === "failed" && !(act.action === "install" && i.installed);
+  return el("div", { class: "agent-row" },
+    el("div", { class: "row" },
+      running ? el("span", { class: "spinner", style: "width:12px;height:12px;color:var(--warn)" }) : el("span", { class: "dot " + cls }),
+      el("b", { text: AGENT_TITLE[name] }),
+      el("span", { class: "muted", style: "font-size:13px", text: status }),
+      el("span", { class: "grow" }),
+      button),
+    el("div", { class: "hint", style: "margin-top:4px" }, AGENT_ABOUT[name]),
+    i.installed && el("div", { class: "hint mono", style: "word-break:break-all", text: i.version || i.path }),
+    running && act.action === "login" && el("div", { class: "hint", text: "В браузере открылась страница входа. Если не открылась, ссылка будет ниже." }),
+    (running || failed) && act.tail && el("pre", { class: "box", style: "max-height:140px", text: act.tail }),
+    failed && el("div", { class: "err-box", style: "margin:8px 0 0",
+      text: (act.action === "install" ? "Установка не удалась. " : "Вход не удался. ") + "Попробуй ещё раз или выполни вручную: " + i.install_command }));
 }
 
 function agentsCard() {
   const d = S.doctor;
-  const missing = d ? Object.values(d).filter(i => !i.installed).length : 0;
-  const rows = !d ? [el("div", { class: "muted" }, el("span", { class: "spinner" }), "  Проверяю…")] :
-    Object.entries(d).map(([name, i]) => el("div", { class: "agent-row" },
-      el("div", { class: "row" },
-        el("span", { class: "dot " + (i.installed ? "ok" : "err") }),
-        el("b", { text: AGENT_TITLE[name] }),
-        el("span", { class: "muted", style: "font-size:13px", text: i.installed ? "установлен" : "не установлен" }),
-        el("span", { class: "grow" }),
-        i.installed
-          ? el("button", { class: "btn small", onclick: () => agentAction(name, "login") }, "Войти в аккаунт")
-          : el("button", { class: "btn primary small", onclick: () => agentAction(name, "install") }, "Установить")),
-      el("div", { class: "hint", style: "margin-top:4px" }, AGENT_ABOUT[name]),
-      i.installed
-        ? el("div", { class: "hint mono", style: "word-break:break-all", text: `${i.version || ""}  ${i.path}` })
-        : el("div", { class: "hint" },
-            i.can_launch ? "Кнопка откроет окно PowerShell с официальной установкой. " : "Выполни в терминале: ",
-            el("code", { class: "mono", style: "word-break:break-all", text: i.install_command }))));
   return el("section", { class: "card", "data-agents-card": "" },
     el("div", { class: "row" },
       el("h2", { class: "grow", style: "margin:0", text: "Агенты" }),
@@ -893,9 +914,9 @@ function agentsCard() {
         e.target.disabled = false;
       } }, "Проверить ещё раз")),
     el("p", { class: "sub", style: "margin-top:6px" },
-      "aihub раздаёт задачи консольным версиям Claude и ChatGPT. Приложениями Claude и ChatGPT на панели задач другая программа управлять не может, поэтому нужны консольные версии. Они работают по тем же подпискам: установи и один раз войди в аккаунт."),
-    rows,
-    d && missing === 0 && el("div", { class: "hint", text: "Оба агента на месте. Если задачи падают с ошибкой входа, нажми «Войти в аккаунт»." }));
+      "aihub раздаёт задачи консольным версиям Claude и ChatGPT: приложениями на панели задач другая программа управлять не может. Консольные версии работают по тем же подпискам. Нажми «Установить», потом «Войти»."),
+    !d ? el("div", { class: "muted" }, el("span", { class: "spinner" }), "  Проверяю…")
+       : Object.entries(d).map(([name, i]) => agentRow(name, i)));
 }
 
 // ------------------------------------------------------------------ settings
@@ -1004,8 +1025,11 @@ async function boot() {
     if (id) { S.job = { id }; S.stage = "run"; S.tab = "task"; renderTabs(); await poll(); }
   }
   render();
+  const ping = () => api("/api/ping").catch(() => {});
+  ping(); setInterval(ping, 20000);
   api("/api/doctor").then(d => {
     S.doctor = d; renderPills();
+    if (Object.values(d).some(i => i.action?.state === "running")) watchActions();
     if ((S.tab === "task" && S.stage === "input") || S.tab === "settings") render();
   }).catch(() => {});
 }

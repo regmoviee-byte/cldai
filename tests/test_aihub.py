@@ -314,20 +314,60 @@ class WebTests(Base):
         self.assertEqual(job["state"], "cancelled")
         self.assertEqual([t["status"] for t in job["tasks"]], ["cancelled", "cancelled"])
 
-    def test_agent_actions(self):
-        with mock.patch("aihub.web.server.subprocess.Popen") as popen:
+    def wait_action(self, agent):
+        import time
+        for _ in range(100):
+            action = self.req("/api/doctor")[1][agent]["action"]
+            if action and action["state"] != "running":
+                return action
+            time.sleep(0.1)
+        self.fail("action did not finish")
+
+    def test_agent_install_and_login_run_in_background(self):
+        fake_install = [sys.executable, "-c", "print('installing'); print('done')"]
+        with mock.patch("aihub.agent_setup.install_argv", return_value=fake_install):
             status, data = self.req("/api/agent-action", {"agent": "codex", "action": "install"})
-            self.assertEqual(status, 200, data)
-            # Windows opens a PowerShell window; elsewhere the UI shows the command to copy.
-            self.assertEqual(data["launched"], os.name == "nt")
-            self.assertEqual(popen.called, os.name == "nt")
-            self.assertIn("npm install -g @openai/codex", data["command"])
-            status, data = self.req("/api/agent-action", {"agent": "claude", "action": "login"})
-            self.assertIn("fake_claude.py", data["command"])
+        self.assertEqual(status, 200, data)
+        action = self.wait_action("codex")
+        self.assertEqual(action["state"], "done")
+        self.assertIn("done", action["tail"])
+
+        status, data = self.req("/api/agent-action", {"agent": "claude", "action": "login"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.wait_action("claude")["state"], "done")
         self.assertEqual(self.req("/api/agent-action", {"agent": "claude", "action": "rm -rf"})[0], 400)
+
+    def test_doctor_reports_version_and_login(self):
         doctor = self.req("/api/doctor?refresh=1")[1]
-        self.assertTrue(doctor["claude"]["installed"])
-        self.assertIn("install_command", doctor["codex"])
+        self.assertEqual(doctor["claude"]["version"], "9.9.9 (Fake Claude)")
+        self.assertIs(doctor["claude"]["logged_in"], True)
+        self.assertIs(doctor["codex"]["logged_in"], True)
+        os.environ["FAKE_LOGGED_OUT"] = "1"
+        doctor = self.req("/api/doctor?refresh=1")[1]
+        self.assertIs(doctor["claude"]["logged_in"], False)
+        self.assertIs(doctor["codex"]["logged_in"], False)
+        os.environ.pop("FAKE_LOGGED_OUT")
+
+    def test_install_argv_is_hidden_and_clean(self):
+        from aihub import agent_setup
+        argv = agent_setup.install_argv("claude")
+        self.assertIn("claude.ai/install", argv[-1])
+        with mock.patch.dict(os.environ, {"PSModulePath": "x"}):
+            self.assertEqual("PSModulePath" in agent_setup.child_env(), os.name != "nt")
+
+    def test_shutdown_stops_running_job_and_server(self):
+        import time
+        os.environ["FAKE_SLEEP"] = "30"
+        status, data = self.req("/api/run", {"task": "t", "plan": PLAN, "workdir": str(self.tmp)})
+        time.sleep(0.5)
+        self.assertEqual(self.req("/api/shutdown", {})[0], 200)
+        job = self.app.jobs[data["job"]["id"]]
+        for _ in range(50):
+            if job.state != "running":
+                break
+            time.sleep(0.1)
+        self.assertEqual(job.state, "cancelled")
+        os.environ.pop("FAKE_SLEEP")
 
     def test_second_launch_detects_running_instance(self):
         from aihub.web.server import already_running
