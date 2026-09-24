@@ -66,7 +66,20 @@ jobs:
           Stop-Process -Id $p.Id -Force
           Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*aihub*" } | Stop-Process -Force
 
+      - name: Claude installer output (diagnostic)
+        if: always()
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"
+          Write-Host "exit: $LASTEXITCODE"
+          Get-ChildItem "$HOME\.local\bin" -ErrorAction SilentlyContinue | Format-Table Name, Length
+          Get-ChildItem "$HOME\.claude" -ErrorAction SilentlyContinue | Format-Table Name
+          where.exe claude
+          [Environment]::GetEnvironmentVariable('Path','User')
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: aihub-windows
           path: dist/aihub.exe
