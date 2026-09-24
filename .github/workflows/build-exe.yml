@@ -1,0 +1,55 @@
+name: Windows exe
+
+on:
+  push:
+    paths:
+      - "aihub/**"
+      - "launcher/**"
+      - "tests/**"
+      - ".github/workflows/build-exe.yml"
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Unit tests (Windows)
+        run: python -m unittest discover -s tests -v
+
+      - name: Build aihub.exe
+        shell: bash
+        run: ./launcher/build.sh
+
+      - name: Smoke test aihub.exe
+        shell: pwsh
+        run: |
+          $env:AIHUB_HOME = "$env:RUNNER_TEMP\aihub-home"
+          $p = Start-Process dist\aihub.exe -ArgumentList "--no-browser","--port","8799" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 90 -and -not $ok; $i++) {
+            try { $r = Invoke-WebRequest http://127.0.0.1:8799/ -UseBasicParsing -TimeoutSec 2; $ok = $r.StatusCode -eq 200 } catch { Start-Sleep 1 }
+          }
+          if (-not $ok) { throw "UI did not come up" }
+          if ($r.Content -notmatch "aihub") { throw "unexpected page" }
+          $token = [regex]::Match($r.Content, 'const TOKEN = "([^"]+)"').Groups[1].Value
+          $state = Invoke-RestMethod http://127.0.0.1:8799/api/state -Headers @{ "X-Aihub-Token" = $token }
+          Write-Host "state: planner=$($state.planner) agents=$($state.agents.PSObject.Properties.Name -join ',')"
+          $p2 = Start-Process dist\aihub.exe -ArgumentList "--no-browser","--port","8799" -PassThru -Wait
+          if ($p2.ExitCode -ne 0) { throw "second launch exited with $($p2.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*aihub*" } | Stop-Process -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aihub-windows
+          path: dist/aihub.exe

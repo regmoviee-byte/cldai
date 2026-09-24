@@ -117,7 +117,7 @@ class AgentTests(Base):
         self.assertTrue(res.text.startswith("codex did"))
         args = self.calls()[0]["args"]
         self.assertEqual(args[args.index("-s") + 1], "read-only")
-        self.assertIn('model_reasoning_effort="high"', args)
+        self.assertIn("model_reasoning_effort=high", args)
         self.assertNotIn("-m", args)  # empty model → codex default
 
     def test_rate_limit_detected(self):
@@ -300,6 +300,10 @@ class WebTests(Base):
         job = self.wait_job(data["job"]["id"])
         self.assertEqual(job["state"], "cancelled")
         self.assertEqual([t["status"] for t in job["tasks"]], ["cancelled", "cancelled"])
+
+    def test_second_launch_detects_running_instance(self):
+        from aihub.web.server import already_running
+        self.assertTrue(already_running(self.port))
 
     def test_settings_roundtrip(self):
         status, data = self.req("/api/settings", {"values": {"routing": {"prefer": "codex"},

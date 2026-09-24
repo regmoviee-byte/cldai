@@ -159,7 +159,9 @@ class CodexAgent(Agent):
         if t.get("model"):
             cmd += ["-m", t["model"]]
         if t.get("effort"):
-            cmd += ["-c", f'model_reasoning_effort="{t["effort"]}"']
+            # Bare value (codex falls back to a literal string): no quotes to mangle through
+            # the .cmd shim that npm installs on Windows.
+            cmd += ["-c", f"model_reasoning_effort={t['effort']}"]
         cmd += list(self.cfg.get("extra_args", []))
         cmd.append("-")  # prompt from stdin
         return cmd

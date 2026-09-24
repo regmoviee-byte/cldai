@@ -4,3 +4,6 @@ __pycache__/
 build/
 dist/
 .aihub/
+dist/
+launcher/payload.zip
+launcher/*.syso

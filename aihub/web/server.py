@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import secrets
 import shutil
 import subprocess
 import threading
 import time
 import tomllib
+import urllib.request
 import uuid
 import webbrowser
 from http import HTTPStatus
@@ -374,15 +376,37 @@ def _default(o):
     raise TypeError(type(o).__name__)
 
 
+class _Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second process bind the same port; we want a clean failure.
+    allow_reuse_address = os.name != "nt"
+    daemon_threads = True
+
+
+def already_running(port: int) -> bool:
+    """True if an aihub UI already answers on this port."""
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never via a proxy
+        with opener.open(f"http://127.0.0.1:{port}/favicon.svg", timeout=2) as r:
+            return r.headers.get("Server", "").startswith("aihub")
+    except (OSError, ValueError):
+        return False
+
+
 def create_server(config_path, port: int, workdir: Path) -> tuple[ThreadingHTTPServer, App]:
     app = App(config_path, workdir)
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), None)
+    httpd = _Server(("127.0.0.1", port), None)
     httpd.RequestHandlerClass = make_handler(app, httpd.server_address[1])
     return httpd, app
 
 
 def serve(config_path=None, port: int = 8765, open_browser: bool = True,
           workdir: Path | None = None) -> int:
+    url = f"http://127.0.0.1:{port}/"
+    if port and already_running(port):
+        print(f"aihub уже запущен: {url}")
+        if open_browser:
+            webbrowser.open(url)
+        return 0
     try:
         httpd, _ = create_server(config_path, port, workdir or Path.cwd())
     except ConfigError as e:
@@ -392,7 +416,8 @@ def serve(config_path=None, port: int = 8765, open_browser: bool = True,
         print(f"cannot listen on 127.0.0.1:{port}: {e} (try --port)")
         return 1
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
-    print(f"aihub UI: {url}\nCtrl+C — остановить")
+    print(f"aihub работает: {url}\n"
+          "Не закрывай это окно, пока пользуешься aihub. Закрыть окно или Ctrl+C — остановить.")
     if open_browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
     try:
