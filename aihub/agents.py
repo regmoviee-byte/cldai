@@ -6,11 +6,13 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 # Only consulted when a run has already failed, so a task *about* rate limits
 # does not trip it.
@@ -65,21 +67,32 @@ class Agent:
         raise NotImplementedError
 
     def run(self, prompt: str, tier: str, workdir: Path, *, text_only: bool = False,
-            timeout: float | None = None) -> Result:
+            timeout: float | None = None,
+            on_proc: Callable[[subprocess.Popen], None] | None = None) -> Result:
+        """on_proc receives the live process so callers (the UI) can kill it."""
         with tempfile.TemporaryDirectory(prefix="aihub-") as tmp:
             out_file = Path(tmp) / "last_message.txt"
             cmd = self.build_cmd(tier, workdir, text_only, out_file)
+            # On Windows the CLIs are .cmd shims that Popen won't find by bare name.
+            cmd[0] = shutil.which(cmd[0]) or cmd[0]
             start = time.monotonic()
             try:
-                proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                                      cwd=workdir, timeout=timeout, encoding="utf-8",
-                                      errors="replace", env=os.environ.copy())
-            except FileNotFoundError:
+                popen = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, text=True, cwd=workdir,
+                                         encoding="utf-8", errors="replace", env=os.environ.copy())
+            except (FileNotFoundError, NotADirectoryError) as e:
                 return Result(False, "", self.name, tier, self.model_label(tier),
-                              error=f"command not found: {cmd[0]}")
+                              error=f"cannot start {cmd[0]}: {e}")
+            if on_proc:
+                on_proc(popen)
+            try:
+                stdout, stderr = popen.communicate(prompt, timeout=timeout)
             except subprocess.TimeoutExpired:
+                popen.kill()
+                popen.communicate()
                 return Result(False, "", self.name, tier, self.model_label(tier),
                               seconds=time.monotonic() - start, error=f"timeout after {timeout}s")
+            proc = subprocess.CompletedProcess(cmd, popen.returncode, stdout, stderr)
             seconds = time.monotonic() - start
             ok, text, usage, cost, error = self.parse(proc, out_file)
         if not ok and not error:

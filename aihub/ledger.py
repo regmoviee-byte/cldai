@@ -67,6 +67,26 @@ class Ledger:
             lines.append(f"{agent} — " + "; ".join(parts))
         return "\n".join(lines)
 
+    # ---------------------------------------------------------------- history
+    def record_run(self, entry: dict) -> None:
+        entry = {"ts": time.time(), **entry}
+        with self._lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            with (self.root / "runs.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def runs(self, limit: int = 50) -> list[dict]:
+        path = self.root / "runs.jsonl"
+        if not path.exists():
+            return []
+        out = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return out[::-1][:limit]
+
     # -------------------------------------------------------------- cooldowns
     def _state(self) -> dict:
         if not self.state_path.exists():

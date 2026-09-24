@@ -14,7 +14,8 @@ dependencies = []
 aihub = "aihub.cli:main"
 
 [tool.setuptools]
-packages = ["aihub"]
+packages = ["aihub", "aihub.web"]
 
 [tool.setuptools.package-data]
 aihub = ["default_config.toml"]
+"aihub.web" = ["static/*"]

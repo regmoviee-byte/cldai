@@ -210,5 +210,107 @@ class CliTests(Base):
         self.assertNotIn("codex", [c["agent"] for c in self.calls()])
 
 
+class WebTests(Base):
+    def setUp(self):
+        super().setUp()
+        import threading
+        from aihub.web.server import create_server
+        self.httpd, self.app = create_server(self.cfg_path, 0, self.tmp)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        super().tearDown()
+
+    def req(self, path, body=None, token=True, host=None):
+        import urllib.error
+        import urllib.request
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["X-Aihub-Token"] = self.app.token
+        if host:
+            headers["Host"] = host
+        r = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", headers=headers,
+                                   data=None if body is None else json.dumps(body).encode(),
+                                   method="GET" if body is None else "POST")
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                raw = resp.read().decode()
+                return resp.status, (json.loads(raw) if path.startswith("/api") else raw)
+        except urllib.error.HTTPError as e:
+            return e.code, e.read().decode()
+
+    def wait_job(self, job_id):
+        import time
+        for _ in range(100):
+            status, data = self.req(f"/api/jobs/{job_id}")
+            if data["job"]["state"] != "running":
+                return data["job"]
+            time.sleep(0.1)
+        self.fail("job did not finish")
+
+    def test_page_has_token_and_api_requires_it(self):
+        status, html = self.req("/", token=False)
+        self.assertEqual(status, 200)
+        self.assertIn(self.app.token, html)
+        self.assertEqual(self.req("/api/state", token=False)[0], 403)
+        self.assertEqual(self.req("/api/state", host="evil.example:80")[0], 403)
+        self.assertEqual(self.req("/", token=False, host="evil.example")[0], 403)
+
+    def test_plan_run_and_history(self):
+        status, data = self.req("/api/plan", {"task": "do it", "planner": "claude", "workdir": str(self.tmp)})
+        self.assertEqual(status, 200, data)
+        plan = data["plan"]
+        plan["tasks"][1]["tier"] = "light"  # user edit in the UI
+        status, data = self.req("/api/run", {"task": "do it", "plan": plan, "workdir": str(self.tmp)})
+        self.assertEqual(status, 200, data)
+        job = self.wait_job(data["job"]["id"])
+        self.assertEqual(job["state"], "done")
+        self.assertEqual([t["status"] for t in job["tasks"]], ["done", "done"])
+        self.assertIn("haiku", job["tasks"][1]["model"])
+        runs = self.req("/api/history")[1]["runs"]
+        self.assertEqual(runs[0]["goal"], "do it")
+        detail = self.req("/api/history/detail?run_dir=" + runs[0]["run_dir"])[1]
+        self.assertIn("claude(haiku) did", detail["reports"]["t2"])
+        self.assertEqual(self.req("/api/history/detail?run_dir=/etc")[0], 404)
+        stats = self.req("/api/stats?days=1")[1]
+        self.assertEqual(stats["runs"], 1)
+
+    def test_manual_planner_flow(self):
+        status, data = self.req("/api/plan", {"task": "x", "planner": "manual"})
+        self.assertTrue(data["manual"])
+        self.assertIn("cost-aware router", data["prompt"])
+        status, data = self.req("/api/plan/parse", {"text": "```json\n" + json.dumps(PLAN) + "\n```"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(len(data["plan"]["tasks"]), 2)
+        self.assertEqual(self.req("/api/plan/parse", {"text": "nope"})[0], 400)
+
+    def test_bad_workdir_rejected(self):
+        status, body = self.req("/api/plan", {"task": "x", "planner": "heuristic", "workdir": "/no/such/dir"})
+        self.assertEqual(status, 400)
+
+    def test_cancel_stops_job(self):
+        os.environ["FAKE_SLEEP"] = "5"
+        status, data = self.req("/api/run", {"task": "t", "plan": PLAN, "workdir": str(self.tmp)})
+        import time
+        time.sleep(0.5)
+        self.req(f"/api/jobs/{data['job']['id']}/cancel", {})
+        job = self.wait_job(data["job"]["id"])
+        self.assertEqual(job["state"], "cancelled")
+        self.assertEqual([t["status"] for t in job["tasks"]], ["cancelled", "cancelled"])
+
+    def test_settings_roundtrip(self):
+        status, data = self.req("/api/settings", {"values": {"routing": {"prefer": "codex"},
+                                                             "execution": {"parallel": 2}}})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.app.cfg["routing"]["prefer"], "codex")
+        self.assertEqual(self.app.cfg["execution"]["parallel"], 2)
+        # fake agent commands from the test config survived the rewrite
+        self.assertIn("fake_claude.py", str(self.app.cfg["agents"]["claude"]["command"]))
+        self.assertEqual(self.req("/api/settings", {"text": "[planner]\nbackend = 'nope'"})[0], 400)
+
+
 if __name__ == "__main__":
     unittest.main()

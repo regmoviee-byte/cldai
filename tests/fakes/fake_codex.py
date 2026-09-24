@@ -15,6 +15,10 @@ if os.environ.get("FAKE_LOG"):
     with open(os.environ["FAKE_LOG"], "a") as f:
         f.write(json.dumps({"agent": "codex", "args": args, "prompt": prompt}) + "\n")
 
+if os.environ.get("FAKE_SLEEP"):
+    import time
+    time.sleep(float(os.environ["FAKE_SLEEP"]))
+
 print(json.dumps({"type": "thread.started", "thread_id": "x"}))
 print(json.dumps({"type": "turn.started"}))
 

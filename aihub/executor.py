@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -51,7 +52,9 @@ def reroute(plan: dict, available: list[str]) -> list[str]:
 
 class Executor:
     def __init__(self, cfg: dict, agents: dict[str, Agent], ledger: Ledger, workdir: Path,
-                 run_dir: Path, log: Callable[[str], None] = print, only: str | None = None):
+                 run_dir: Path, log: Callable[[str], None] = print, only: str | None = None,
+                 on_task: Callable[..., None] | None = None):
+        """on_task(tid, status, agent=, tier=, model=, result=) fires on every state change."""
         self.cfg = cfg
         self.agents = agents
         self.ledger = ledger
@@ -59,6 +62,10 @@ class Executor:
         self.run_dir = run_dir
         self.log = log
         self.only = only
+        self.on_task = on_task or (lambda *a, **k: None)
+        self.cancelled = False
+        self._procs: set = set()
+        self._procs_lock = threading.Lock()
         ex = cfg["execution"]
         self.parallel = max(1, int(ex.get("parallel", 1)))
         self.escalate = bool(ex.get("escalate_on_failure", True))
@@ -67,6 +74,15 @@ class Executor:
         self.cooldown_hours = float(cfg["routing"].get("cooldown_hours", 5))
 
     # ----------------------------------------------------------------- public
+    def cancel(self) -> None:
+        self.cancelled = True
+        with self._procs_lock:
+            for proc in list(self._procs):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
     def run(self, plan: dict, goal: str) -> dict:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         (self.run_dir / "plan.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False),
@@ -81,7 +97,14 @@ class Executor:
                 if status[tid] == "pending" and any(status[d] in ("failed", "skipped")
                                                     for d in by_id[tid]["depends_on"]):
                     status[tid] = "skipped"
+                    self.on_task(tid, "skipped")
                     self.log(f"[{tid}] skipped: a dependency failed")
+            if self.cancelled:
+                for tid in order:
+                    if status[tid] == "pending":
+                        status[tid] = "cancelled"
+                        self.on_task(tid, "cancelled")
+                break
             ready = [tid for tid in order if status[tid] == "pending"
                      and all(status[d] == "done" for d in by_id[tid]["depends_on"])]
             if not ready:
@@ -93,9 +116,15 @@ class Executor:
                 outs = list(pool.map(lambda tid: self._run_task(by_id[tid], goal, results), batch))
             for tid, res in zip(batch, outs):
                 results[tid] = res
-                status[tid] = "done" if res.ok else "failed"
+                status[tid] = "done" if res.ok else ("cancelled" if self.cancelled else "failed")
+                self.on_task(tid, status[tid], result=res)
 
         summary = self._write_summary(plan, goal, status, results)
+        self.ledger.record_run({
+            "run_dir": str(self.run_dir), "workdir": str(self.workdir), "goal": goal,
+            "summary": plan.get("summary", ""), "status": status,
+            "ok": all(s == "done" for s in status.values()),
+        })
         return {"status": status, "results": results, "summary_path": summary}
 
     # --------------------------------------------------------------- internals
@@ -126,12 +155,19 @@ class Executor:
                 self.log(f"[{task['id']}] {agent} is on cooldown → {alt}")
                 agent = alt
                 continue
+            if self.cancelled:
+                break
             label = self.agents[agent].model_label(tier)
             self.log(f"[{task['id']}] → {agent} {tier} ({label}): {task['title']}")
-            res = self.agents[agent].run(prompt, tier, self.workdir, timeout=self.timeout)
+            self.on_task(task["id"], "running", agent=agent, tier=tier, model=label)
+            res = self.agents[agent].run(prompt, tier, self.workdir, timeout=self.timeout,
+                                         on_proc=self._track)
             self._record(task, res)
             if res.ok:
                 self.log(f"[{task['id']}] ✓ done in {res.seconds:.0f}s")
+                break
+            if self.cancelled:
+                res.error = "cancelled"
                 break
             self.log(f"[{task['id']}] ✗ {agent} {tier}: {res.error.splitlines()[0] if res.error else 'failed'}")
             if res.rate_limited:
@@ -155,6 +191,13 @@ class Executor:
             f"ok: {res.ok}\n\n## Prompt\n\n{prompt}\n\n## Result\n\n{res.text or res.error}\n",
             encoding="utf-8")
         return res
+
+    def _track(self, proc) -> None:
+        with self._procs_lock:
+            self._procs = {p for p in self._procs if p.poll() is None}
+            self._procs.add(proc)
+        if self.cancelled:
+            proc.kill()
 
     def _usable(self, agent: str) -> bool:
         return self.agents[agent].enabled and not self.ledger.is_cooling(agent)

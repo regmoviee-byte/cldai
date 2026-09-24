@@ -1,0 +1,950 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aihub</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+:root {
+  --bg: #f5f4ef; --surface: #ffffff; --surface-2: #efede6; --surface-3: #e6e3da;
+  --text: #1f1e1b; --muted: #6d6a61; --faint: #9a968b; --border: #e2dfd5;
+  --accent: #3d5afe; --accent-ink: #ffffff; --accent-soft: #e6eaff;
+  --claude: #c8633f; --claude-soft: #f8e7df; --codex: #12876a; --codex-soft: #dcf1ea;
+  --light: #2f9e44; --light-soft: #e3f4e5; --medium: #c98a06; --medium-soft: #fbf0d4;
+  --heavy: #d0395e; --heavy-soft: #fbe2e8;
+  --ok: #2f9e44; --err: #d0395e; --warn: #c98a06;
+  --shadow: 0 1px 2px rgba(30, 28, 20, .05), 0 4px 16px rgba(30, 28, 20, .05);
+  --radius: 14px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131312; --surface: #1c1b19; --surface-2: #252421; --surface-3: #302f2b;
+    --text: #edece7; --muted: #a3a097; --faint: #77746c; --border: #34332f;
+    --accent: #7b8cff; --accent-ink: #0f1020; --accent-soft: #252a4a;
+    --claude: #e58a66; --claude-soft: #3a261e; --codex: #3cc39c; --codex-soft: #183229;
+    --light: #56c26a; --light-soft: #1b3120; --medium: #e5ad32; --medium-soft: #3a2f14;
+    --heavy: #f06b8b; --heavy-soft: #3d1e27;
+    --ok: #56c26a; --err: #f06b8b; --warn: #e5ad32;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131312; --surface: #1c1b19; --surface-2: #252421; --surface-3: #302f2b;
+  --text: #edece7; --muted: #a3a097; --faint: #77746c; --border: #34332f;
+  --accent: #7b8cff; --accent-ink: #0f1020; --accent-soft: #252a4a;
+  --claude: #e58a66; --claude-soft: #3a261e; --codex: #3cc39c; --codex-soft: #183229;
+  --light: #56c26a; --light-soft: #1b3120; --medium: #e5ad32; --medium-soft: #3a2f14;
+  --heavy: #f06b8b; --heavy-soft: #3d1e27;
+  --ok: #56c26a; --err: #f06b8b; --warn: #e5ad32;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--accent); }
+
+/* ---------- top bar ---------- */
+.top {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
+}
+.top-inner {
+  max-width: 1000px; margin: 0 auto; padding: 10px 16px;
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
+.brand small { font-weight: 500; color: var(--muted); font-size: 13px; }
+.tabs { display: flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 10px; }
+.tabs button {
+  border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  color: var(--muted); font-weight: 550; font-size: 14px;
+}
+.tabs button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.pills { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 550;
+  padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.dot.ok { background: var(--ok); } .dot.err { background: var(--err); } .dot.warn { background: var(--warn); }
+.icon-btn {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 8px; width: 32px; height: 32px;
+  display: grid; place-items: center; cursor: pointer; color: var(--muted);
+}
+
+/* ---------- layout ---------- */
+main { max-width: 1000px; margin: 0 auto; padding: 22px 16px 80px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 20px; margin-bottom: 16px;
+}
+.card h2 { margin: 0 0 4px; font-size: 18px; letter-spacing: -.01em; }
+.card .sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.grow { flex: 1 1 auto; min-width: 0; }
+.field { margin-bottom: 16px; }
+.field > label, .label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 13px; }
+
+input[type=text], input[type=number], select, textarea {
+  width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px; outline: none; transition: border-color .15s, box-shadow .15s;
+}
+textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea.big { min-height: 140px; font-size: 15px; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: 1px solid var(--border); background: var(--surface); padding: 9px 16px; border-radius: 10px;
+  cursor: pointer; font-weight: 600; white-space: nowrap; text-decoration: none; color: var(--text);
+  transition: transform .06s, background .15s, opacity .15s;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.07); }
+.btn.danger { color: var(--err); }
+.btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
+.btn[disabled] { opacity: .5; cursor: default; }
+
+/* segmented control */
+.seg { display: inline-flex; background: var(--surface-2); padding: 3px; border-radius: 10px; gap: 2px; flex-wrap: wrap; }
+.seg button {
+  border: 0; background: transparent; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  font-weight: 550; font-size: 14px; color: var(--muted);
+}
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.seg.small button { padding: 3px 9px; font-size: 13px; }
+
+/* planner choice cards */
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.choice {
+  text-align: left; display: flex; flex-direction: column; justify-content: flex-start; border: 1px solid var(--border); background: var(--surface); border-radius: 12px;
+  padding: 12px 14px; cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.choice b { display: block; font-size: 14px; margin-bottom: 2px; }
+.choice span { font-size: 13px; color: var(--muted); line-height: 1.4; display: block; }
+.choice.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* stepper */
+.stepper { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; color: var(--faint); font-size: 14px; font-weight: 600; flex-wrap: wrap; }
+.stepper .st { display: flex; align-items: center; gap: 8px; }
+.stepper .num { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); font-size: 12px; }
+.stepper .st.on { color: var(--text); } .stepper .st.on .num { background: var(--accent); color: var(--accent-ink); }
+.stepper .st.done { color: var(--muted); } .stepper .st.done .num { background: var(--ok); color: #fff; }
+.stepper .line { width: 28px; height: 1px; background: var(--border); }
+
+/* chips */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 650;
+  padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); white-space: nowrap;
+}
+.chip.claude { background: var(--claude-soft); color: var(--claude); }
+.chip.codex { background: var(--codex-soft); color: var(--codex); }
+.chip.light { background: var(--light-soft); color: var(--light); }
+.chip.medium { background: var(--medium-soft); color: var(--medium); }
+.chip.heavy { background: var(--heavy-soft); color: var(--heavy); }
+
+/* plan */
+.meter { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-2); gap: 2px; margin: 10px 0 8px; }
+.meter i { display: block; height: 100%; }
+.meter i.light { background: var(--light); } .meter i.medium { background: var(--medium); } .meter i.heavy { background: var(--heavy); }
+.legend { display: flex; gap: 14px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; background: currentColor; vertical-align: 0; }
+.legend .light { color: var(--light); } .legend .medium { color: var(--medium); } .legend .heavy { color: var(--heavy); }
+.legend b { color: var(--text); font-weight: 600; }
+.steps { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.step { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); position: relative; }
+.step.tier-light { border-left: 4px solid var(--light); }
+.step.tier-medium { border-left: 4px solid var(--medium); }
+.step.tier-heavy { border-left: 4px solid var(--heavy); }
+.step-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.step-id { font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--surface-2); padding: 2px 7px; border-radius: 6px; }
+.step-head input { font-weight: 600; }
+.step-controls { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+.step-controls .model { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.step .reason { font-size: 13px; color: var(--muted); font-style: italic; margin-top: 6px; }
+details.prompt summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); padding: 4px 0; }
+details.prompt textarea { margin-top: 6px; font-size: 14px; min-height: 110px; }
+.deps { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.dep { border: 1px dashed var(--border); background: transparent; border-radius: 999px; padding: 1px 9px; cursor: pointer; font-size: 12px; font-family: var(--mono); color: var(--muted); }
+.dep.on { border-style: solid; border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+/* manual panel */
+.manual-steps { counter-reset: n; display: flex; flex-direction: column; gap: 14px; }
+.manual-steps > div { display: grid; grid-template-columns: 28px 1fr; gap: 10px; }
+.manual-steps > div::before {
+  counter-increment: n; content: counter(n); width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; font-size: 13px;
+}
+pre.box {
+  margin: 8px 0 0; background: var(--surface-2); border-radius: 10px; padding: 12px; max-height: 220px; overflow: auto;
+  font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+}
+
+/* run */
+.run-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.badge { font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
+.badge.running { background: var(--accent-soft); color: var(--accent); }
+.badge.done { background: var(--light-soft); color: var(--ok); }
+.badge.failed { background: var(--heavy-soft); color: var(--err); }
+.badge.cancelled { background: var(--surface-2); color: var(--muted); }
+.progress { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; margin: 12px 0 4px; }
+.progress i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.tasks { display: flex; flex-direction: column; margin-top: 12px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.task { border-bottom: 1px solid var(--border); }
+.task:last-child { border-bottom: 0; }
+.task summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; flex-wrap: wrap; }
+.task summary::-webkit-details-marker { display: none; }
+.task .title { font-weight: 600; flex: 1 1 200px; min-width: 0; }
+.task .time { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.task .body { padding: 0 14px 14px 46px; }
+.task pre { margin: 0; background: var(--surface-2); border-radius: 10px; padding: 12px; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow: auto; }
+.task pre.err { color: var(--err); }
+.st-icon { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; flex: none; background: var(--surface-2); color: var(--muted); }
+.st-icon.done { background: var(--ok); color: #fff; }
+.st-icon.failed { background: var(--err); color: #fff; }
+.st-icon.running { background: transparent; border: 2.5px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .st-icon.running { animation-duration: 3s; } }
+details.log { margin-top: 14px; }
+details.log summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+details.log pre { max-height: 240px; overflow: auto; background: var(--surface-2); border-radius: 10px; padding: 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; margin: 8px 0 0; }
+
+/* stats */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
+.kpi .k { font-size: 13px; color: var(--muted); font-weight: 550; }
+.kpi .v { font-size: 26px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.kpi .v small { font-size: 14px; color: var(--muted); font-weight: 550; }
+.agent-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.agent-card h3 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+.agent-card h3 .sw { width: 12px; height: 12px; border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 7px 4px; border-bottom: 1px solid var(--border); }
+th:first-child, td:first-child { text-align: left; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+.cool { margin-top: 14px; padding: 12px; border-radius: 10px; background: var(--surface-2); font-size: 14px; }
+.cool .row { margin-top: 8px; gap: 8px; }
+
+/* history */
+.hist { display: flex; flex-direction: column; gap: 10px; }
+.hist-item { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.hist-item > summary { list-style: none; cursor: pointer; padding: 14px 16px; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+.hist-item > summary::-webkit-details-marker { display: none; }
+.hist-item .goal { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-item .meta { font-size: 13px; color: var(--muted); grid-column: 1 / -1; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.hist-item .body { padding: 0 16px 16px; }
+
+/* settings */
+.set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 4px 16px; }
+.tier-table td, .tier-table th { text-align: left; padding: 6px 6px 6px 0; border: 0; }
+.tier-table input { padding: 6px 10px; }
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 550; }
+.switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+
+/* misc */
+.empty { text-align: center; color: var(--muted); padding: 40px 16px; }
+.err-box { background: var(--heavy-soft); color: var(--err); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 14px; white-space: pre-wrap; }
+.note-box { background: var(--medium-soft); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin-bottom: 14px; }
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0;
+  background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-weight: 600; font-size: 14px;
+  transition: all .25s; pointer-events: none; z-index: 50; max-width: calc(100% - 32px);
+}
+.toast.show { opacity: 1; transform: translateX(-50%); }
+.spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; align-items: center; }
+.sep { height: 1px; background: var(--border); margin: 18px 0; }
+
+@media (max-width: 640px) {
+  .top { position: static; }
+  .top-inner { gap: 10px; }
+  .pills { margin-left: auto; }
+  .pill { padding: 3px 8px; font-size: 12px; }
+  .tabs { order: 3; width: 100%; }
+  .tabs button { flex: 1; padding: 6px 4px; font-size: 13px; }
+  .card { padding: 16px; }
+  .task .body { padding-left: 14px; }
+  .brand small { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="top"><div class="top-inner">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1f1e1b"/><circle cx="10" cy="16" r="4.5" fill="#d97757"/><circle cx="22" cy="16" r="4.5" fill="#19a37f"/><path d="M14.5 16h3" stroke="#f4f3ee" stroke-width="2" stroke-linecap="round"/></svg>
+    aihub <small>диспетчер Claude ⇄ Codex</small>
+  </div>
+  <nav class="tabs" id="tabs"></nav>
+  <div class="pills" id="pills"></div>
+</div></header>
+<main id="view"></main>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const TOKEN = "__AIHUB_TOKEN__";
+
+// ------------------------------------------------------------------ utils
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "X-Aihub-Token": TOKEN, "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let data;
+  try { data = await res.json(); } catch { data = { error: `HTTP ${res.status}` }; }
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (k === "value") n.value = v;
+    else if (k === "checked") n.checked = v;
+    else if (k === "style") n.style.cssText = v;
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    n.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return n;
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("aihub:" + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("aihub:" + k, JSON.stringify(v)); } catch {} },
+};
+
+const AGENT_NAME = { claude: "Claude", codex: "Codex" };
+const TIER_NAME = { light: "Лёгкий", medium: "Средний", heavy: "Тяжёлый" };
+const STATUS_NAME = { pending: "ждёт", running: "работает", done: "готово", failed: "ошибка", skipped: "пропущено", cancelled: "остановлено" };
+const fmtTime = s => s == null ? "" : s < 60 ? `${Math.round(s)} с` : `${Math.floor(s / 60)} мин ${Math.round(s % 60)} с`;
+const fmtNum = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n || 0));
+const fmtDate = ts => new Date(ts * 1000).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const plural = (n, one, few, many) => {
+  const m10 = n % 10, m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+};
+const agentChip = a => el("span", { class: "chip " + a, text: AGENT_NAME[a] || a });
+const tierChip = t => el("span", { class: "chip " + t, text: TIER_NAME[t] || t });
+
+function seg(options, value, onPick, cls = "") {
+  return el("div", { class: "seg " + cls, role: "group" },
+    options.map(([v, label]) => el("button", {
+      type: "button", class: v === value ? "on" : "", text: label, "aria-pressed": String(v === value),
+      onclick: () => onPick(v),
+    })));
+}
+
+// ------------------------------------------------------------------ state
+const S = {
+  tab: store.get("tab", "task"),
+  server: null, doctor: null,
+  task: store.get("draft", ""),
+  workdir: "",
+  planner: null,
+  only: store.get("only", "both"),
+  stage: "input",           // input | manual | plan | run
+  manualPrompt: "", manualReply: "",
+  plan: null, notes: [], error: "", busy: false,
+  job: null, openTasks: new Set(),
+  statsDays: 7,
+};
+
+// ------------------------------------------------------------------ chrome
+function renderTabs() {
+  const tabs = [["task", "Задача"], ["history", "История"], ["stats", "Расход"], ["settings", "Настройки"]];
+  document.getElementById("tabs").replaceChildren(...tabs.map(([k, label]) =>
+    el("button", { class: S.tab === k ? "on" : "", text: label, onclick: () => go(k) })));
+}
+
+function renderPills() {
+  const box = document.getElementById("pills");
+  if (!S.server) { box.replaceChildren(); return; }
+  const pills = Object.entries(S.server.agents).map(([name, a]) => {
+    const d = S.doctor && S.doctor[name];
+    let cls = "ok", title = "готов";
+    if (!a.enabled) { cls = ""; title = "выключен"; }
+    else if (d && !d.installed) { cls = "err"; title = "не установлен"; }
+    else if (a.cooldown_until) { cls = "warn"; title = "квота кончилась до " + fmtDate(a.cooldown_until); }
+    return el("span", { class: "pill", title }, el("span", { class: "dot " + cls }), AGENT_NAME[name]);
+  });
+  const theme = document.documentElement.dataset.theme;
+  pills.push(el("button", {
+    class: "icon-btn", title: "Сменить тему", "aria-label": "Сменить тему",
+    text: theme === "dark" ? "☀" : theme === "light" ? "☾" : "◐",
+    onclick: () => {
+      const order = [undefined, "dark", "light"];
+      const next = order[(order.indexOf(document.documentElement.dataset.theme) + 1) % 3];
+      if (next) document.documentElement.dataset.theme = next; else delete document.documentElement.dataset.theme;
+      store.set("theme", next || null); renderPills();
+    },
+  }));
+  box.replaceChildren(...pills);
+}
+
+function go(tab) {
+  S.tab = tab; store.set("tab", tab);
+  renderTabs(); render();
+}
+
+function render() {
+  const view = document.getElementById("view");
+  const fn = { task: viewTask, history: viewHistory, stats: viewStats, settings: viewSettings }[S.tab];
+  view.replaceChildren(fn());
+}
+
+// ------------------------------------------------------------------ task tab
+const PLANNERS = [
+  ["manual", "ChatGPT вручную", "Бесплатно: копируешь промпт в обычный чат ChatGPT и вставляешь ответ сюда."],
+  ["claude", "Claude Haiku", "Автоматически. Облегчённый вызов без инструментов, ~1–2 тыс. токенов."],
+  ["codex", "Codex (лёгкий)", "Автоматически, тратит немного квоты Codex."],
+  ["heuristic", "Без разбивки", "Одним шагом, уровень модели по ключевым словам. Для мелочей."],
+];
+
+function stepper() {
+  const idx = { input: 0, manual: 0, plan: 1, run: 2 }[S.stage];
+  const names = ["Задача", "План", "Выполнение"];
+  const parts = [];
+  names.forEach((n, i) => {
+    if (i) parts.push(el("span", { class: "line" }));
+    parts.push(el("span", { class: "st " + (i === idx ? "on" : i < idx ? "done" : "") },
+      el("span", { class: "num", text: i < idx ? "✓" : String(i + 1) }), n));
+  });
+  return el("div", { class: "stepper" }, parts);
+}
+
+function viewTask() {
+  const wrap = el("div", {}, stepper());
+  if (S.stage === "run") wrap.append(viewRun());
+  else if (S.stage === "plan") wrap.append(viewPlan());
+  else {
+    wrap.append(viewInput());
+    if (S.stage === "manual") wrap.append(viewManual());
+  }
+  return wrap;
+}
+
+function viewInput() {
+  const recent = store.get("recentDirs", []);
+  const planning = S.busy && S.stage === "input";
+  return el("section", { class: "card" },
+    el("h2", { text: "Что нужно сделать?" }),
+    el("p", { class: "sub", text: "Опиши задачу как обычно. aihub разобьёт её на шаги и отдаст каждый самой дешёвой модели, которая справится." }),
+    S.error && el("div", { class: "err-box", text: S.error }),
+    el("div", { class: "field" },
+      el("textarea", {
+        class: "big", id: "task", value: S.task,
+        placeholder: "Например: добавь эндпоинт /health с тестом, обнови README и разберись, почему иногда падает обновление токена",
+        oninput: e => { S.task = e.target.value; store.set("draft", S.task); },
+        onkeydown: e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) makePlan(); },
+      })),
+    el("div", { class: "field" },
+      el("label", { for: "workdir", text: "Папка проекта" }),
+      el("input", {
+        type: "text", id: "workdir", class: "mono", value: S.workdir, list: "dirs", spellcheck: "false",
+        oninput: e => { S.workdir = e.target.value; },
+      }),
+      el("datalist", { id: "dirs" }, recent.map(d => el("option", { value: d }))),
+      el("div", { class: "hint", text: "Здесь агенты будут читать и менять файлы." })),
+    el("div", { class: "field" },
+      el("span", { class: "label", text: "Кто разбивает задачу на шаги" }),
+      el("div", { class: "choices" }, PLANNERS.map(([k, title, desc]) =>
+        el("button", { type: "button", class: "choice" + (S.planner === k ? " on" : ""),
+          onclick: () => { S.planner = k; store.set("planner", k); render(); } },
+          el("b", { text: title }), el("span", { text: desc }))))),
+    el("div", { class: "field" },
+      el("span", { class: "label", text: "Каких агентов использовать" }),
+      seg([["both", "Обоих"], ["claude", "Только Claude"], ["codex", "Только Codex"]], S.only,
+        v => { S.only = v; store.set("only", v); render(); })),
+    el("div", { class: "actions" },
+      el("button", { class: "btn primary", disabled: planning, onclick: makePlan },
+        planning ? [el("span", { class: "spinner" }), "Составляю план…"] : "Составить план →"),
+      el("span", { class: "muted", style: "font-size:13px", text: "Ctrl/⌘ + Enter" })));
+}
+
+function rememberDir(d) {
+  if (!d) return;
+  const list = [d, ...store.get("recentDirs", []).filter(x => x !== d)].slice(0, 8);
+  store.set("recentDirs", list); store.set("workdir", d);
+}
+
+async function makePlan() {
+  if (!S.task.trim()) { S.error = "Сначала опиши задачу."; render(); return; }
+  S.error = ""; S.busy = true; render();
+  try {
+    const r = await api("/api/plan", { task: S.task, planner: S.planner, only: S.only, workdir: S.workdir });
+    rememberDir(S.workdir);
+    if (r.manual) { S.manualPrompt = r.prompt; S.manualReply = ""; S.stage = "manual"; }
+    else { S.plan = r.plan; S.notes = r.notes || []; S.stage = "plan"; }
+  } catch (e) { S.error = e.message; }
+  S.busy = false; render();
+  if (S.stage === "manual") document.getElementById("manual")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function viewManual() {
+  return el("section", { class: "card", id: "manual" },
+    el("h2", { text: "Спроси ChatGPT" }),
+    el("p", { class: "sub", text: "Обычный чат ChatGPT не тратит квоты Codex и Claude Code." }),
+    el("div", { class: "manual-steps" },
+      el("div", {}, el("div", {},
+        el("b", { text: "Скопируй промпт" }),
+        el("div", { class: "row", style: "margin-top:8px" },
+          el("button", { class: "btn primary small", onclick: async () => {
+            try { await navigator.clipboard.writeText(S.manualPrompt); toast("Промпт скопирован"); }
+            catch { toast("Не получилось — выдели текст ниже и скопируй вручную"); }
+          } }, "Скопировать промпт"),
+          el("a", { class: "btn small", href: "https://chatgpt.com/", target: "_blank", rel: "noopener" }, "Открыть ChatGPT ↗")),
+        el("details", {}, el("summary", { class: "muted", style: "cursor:pointer;font-size:13px;margin-top:8px", text: "Показать промпт" }),
+          el("pre", { class: "box", text: S.manualPrompt })))),
+      el("div", {}, el("div", {},
+        el("b", { text: "Вставь в новый чат ChatGPT и отправь" }),
+        el("div", { class: "hint", text: "Подойдёт любая модель ChatGPT: задача простая." }))),
+      el("div", {}, el("div", {},
+        el("b", { text: "Вставь ответ ChatGPT сюда" }),
+        el("textarea", { style: "margin-top:8px", class: "mono", value: S.manualReply, placeholder: "{\"summary\": …, \"tasks\": [ … ]}",
+          oninput: e => { S.manualReply = e.target.value; } }),
+        el("div", { class: "actions" },
+          el("button", { class: "btn primary", onclick: async () => {
+            try {
+              const r = await api("/api/plan/parse", { text: S.manualReply, only: S.only });
+              S.plan = r.plan; S.notes = []; S.error = ""; S.stage = "plan"; render(); window.scrollTo({ top: 0 });
+            } catch (e) { toast(e.message); }
+          } }, "Принять план →"),
+          el("button", { class: "btn", onclick: () => { S.stage = "input"; render(); } }, "Отмена"))))));
+}
+
+// ------------------------------------------------------------------ plan
+function modelLabel(agent, tier) {
+  return S.server?.agents?.[agent]?.tiers?.[tier] || "";
+}
+
+function nextId() {
+  let i = S.plan.tasks.length + 1;
+  const ids = new Set(S.plan.tasks.map(t => t.id));
+  while (ids.has("t" + i)) i++;
+  return "t" + i;
+}
+
+function viewPlan() {
+  const tasks = S.plan.tasks;
+  const counts = { light: 0, medium: 0, heavy: 0 };
+  tasks.forEach(t => counts[t.tier]++);
+  const cheap = counts.light + counts.medium;
+
+  const stepCards = tasks.map((t, idx) => {
+    const earlier = tasks.slice(0, idx);
+    return el("div", { class: "step tier-" + t.tier },
+      el("div", { class: "step-head" },
+        el("span", { class: "step-id", text: t.id }),
+        el("input", { type: "text", class: "grow", value: t.title, "aria-label": "Название шага",
+          oninput: e => { t.title = e.target.value; } }),
+        el("button", { class: "icon-btn", title: "Удалить шаг", "aria-label": "Удалить шаг", text: "✕",
+          onclick: () => {
+            S.plan.tasks = tasks.filter(x => x !== t);
+            S.plan.tasks.forEach(x => { x.depends_on = x.depends_on.filter(d => d !== t.id); });
+            render();
+          } })),
+      el("div", { class: "step-controls" },
+        seg([["claude", "Claude"], ["codex", "Codex"]], t.agent, v => { t.agent = v; render(); }, "small"),
+        seg([["light", "Лёгкий"], ["medium", "Средний"], ["heavy", "Тяжёлый"]], t.tier, v => { t.tier = v; render(); }, "small"),
+        el("span", { class: "model", text: modelLabel(t.agent, t.tier) })),
+      earlier.length ? el("div", { class: "deps" }, "После:",
+        earlier.map(o => el("button", { type: "button", class: "dep" + (t.depends_on.includes(o.id) ? " on" : ""), text: o.id,
+          title: o.title,
+          onclick: () => {
+            t.depends_on = t.depends_on.includes(o.id) ? t.depends_on.filter(d => d !== o.id) : [...t.depends_on, o.id];
+            render();
+          } }))) : null,
+      el("details", { class: "prompt" },
+        el("summary", { text: "Инструкция для агента" }),
+        el("textarea", { value: t.prompt, oninput: e => { t.prompt = e.target.value; } })),
+      t.reason && el("div", { class: "reason", text: t.reason }));
+  });
+
+  return el("section", { class: "card" },
+    el("div", { class: "row" },
+      el("div", { class: "grow" },
+        el("h2", { text: "План" }),
+        el("p", { class: "sub", style: "margin:0", text: S.plan.summary || S.task.slice(0, 140) })),
+      el("button", { class: "btn small", onclick: () => { S.stage = "input"; render(); } }, "← Изменить задачу")),
+    S.notes.map(n => el("div", { class: "note-box", style: "margin-top:12px", text: n })),
+    el("div", { class: "meter", "aria-hidden": "true" }, ["light", "medium", "heavy"].map(k => counts[k] ? el("i", { class: k, style: `flex:${counts[k]}` }) : null)),
+    el("div", { class: "legend" },
+      el("span", { class: "light" }, "Лёгкие ", el("b", { text: counts.light })),
+      el("span", { class: "medium" }, "Средние ", el("b", { text: counts.medium })),
+      el("span", { class: "heavy" }, "Тяжёлые ", el("b", { text: counts.heavy })),
+      el("span", { style: "margin-left:auto" }, `${cheap} из ${tasks.length} шагов без тяжёлых моделей`)),
+    el("div", { class: "steps" }, stepCards),
+    el("div", { class: "actions" },
+      el("button", { class: "btn small", onclick: () => {
+        S.plan.tasks.push({ id: nextId(), title: "Новый шаг", agent: S.only === "codex" ? "codex" : "claude",
+          tier: "light", depends_on: [], reason: "", prompt: "" });
+        render();
+      } }, "+ Добавить шаг")),
+    el("div", { class: "sep" }),
+    el("div", { class: "row" },
+      el("button", { class: "btn primary", disabled: S.busy || !tasks.length, onclick: startRun },
+        S.busy ? [el("span", { class: "spinner" }), "Запускаю…"] : "▶ Запустить"),
+      el("span", { class: "muted", style: "font-size:13px", text: `Агенты будут работать в ${S.workdir}` })));
+}
+
+async function startRun() {
+  const empty = S.plan.tasks.find(t => !t.prompt.trim());
+  if (empty) { toast(`У шага ${empty.id} пустая инструкция`); return; }
+  S.busy = true; render();
+  try {
+    const r = await api("/api/run", { task: S.task, plan: S.plan, workdir: S.workdir, only: S.only });
+    S.job = r.job; S.openTasks = new Set(); S.stage = "run"; store.set("job", S.job.id);
+    poll();
+  } catch (e) { toast(e.message); }
+  S.busy = false; render();
+}
+
+// ------------------------------------------------------------------ run
+let pollTimer = null;
+async function poll() {
+  clearTimeout(pollTimer);
+  if (!S.job) return;
+  try {
+    const r = await api("/api/jobs/" + S.job.id);
+    S.job = r.job;
+    if (S.tab === "task" && S.stage === "run") updateRun();
+  } catch (e) {
+    if (/not found/.test(e.message)) { S.job = null; store.set("job", null); S.stage = "input"; render(); return; }
+  }
+  if (S.job && S.job.state === "running") pollTimer = setTimeout(poll, 1000);
+  else { store.set("job", null); refreshState(); }
+}
+
+function updateRun() {
+  const old = document.getElementById("run");
+  if (!old) { render(); return; }
+  const logEl = old.querySelector("details.log pre");
+  const stick = !logEl || logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
+  const logOpen = old.querySelector("details.log")?.open;
+  const fresh = viewRun();
+  old.replaceWith(fresh);
+  const nl = fresh.querySelector("details.log");
+  if (nl && logOpen) { nl.open = true; const p = nl.querySelector("pre"); if (stick) p.scrollTop = p.scrollHeight; }
+}
+
+function viewRun() {
+  const j = S.job;
+  const now = Date.now() / 1000;
+  const elapsed = (j.finished || now) - j.started;
+  const done = j.tasks.filter(t => !["pending", "running"].includes(t.status)).length;
+  const stateText = { running: "Выполняется", done: "Готово", failed: "Есть ошибки", cancelled: "Остановлено" }[j.state];
+
+  const rows = j.tasks.map(t => {
+    const icon = { done: "✓", failed: "!", skipped: "↷", cancelled: "■", pending: "", running: "" }[t.status];
+    const secs = t.status === "running" && t.started ? now - t.started : t.seconds;
+    const hasBody = t.text || t.error;
+    const d = el("details", { class: "task", open: S.openTasks.has(t.id) && hasBody,
+      ontoggle: e => { e.target.open ? S.openTasks.add(t.id) : S.openTasks.delete(t.id); } },
+      el("summary", {},
+        el("span", { class: "st-icon " + t.status, text: icon, title: STATUS_NAME[t.status] }),
+        el("span", { class: "title" }, el("span", { class: "muted mono", text: t.id + "  " }), t.title),
+        agentChip(t.agent), tierChip(t.tier),
+        t.model && el("span", { class: "chip mono", text: t.model }),
+        el("span", { class: "time", text: secs != null ? fmtTime(secs) : STATUS_NAME[t.status] })),
+      hasBody ? el("div", { class: "body" },
+        t.text && el("pre", { text: t.text }),
+        t.error && t.status !== "done" && el("pre", { class: "err", style: t.text ? "margin-top:8px" : "", text: t.error })) : null);
+    return d;
+  });
+
+  return el("section", { class: "card", id: "run" },
+    el("div", { class: "run-head" },
+      el("h2", { class: "grow", style: "margin:0", text: S.job.summary || "Выполнение" }),
+      el("span", { class: "badge " + j.state, text: stateText }),
+      el("span", { class: "mono muted", text: fmtTime(elapsed) })),
+    el("p", { class: "sub", style: "margin:0", text: j.goal.length > 220 ? j.goal.slice(0, 220) + "…" : j.goal }),
+    el("div", { class: "progress" }, el("i", { style: `width:${Math.round(done / j.tasks.length * 100)}%` })),
+    el("div", { class: "muted", style: "font-size:13px", text: `${done} из ${j.tasks.length} шагов` }),
+    el("div", { class: "tasks" }, rows),
+    el("details", { class: "log" }, el("summary", { text: `Журнал (${j.log.length})` }),
+      el("pre", { text: j.log.map(l => new Date(l.ts * 1000).toLocaleTimeString("ru-RU") + "  " + l.msg).join("\n") })),
+    el("div", { class: "actions" },
+      j.state === "running"
+        ? el("button", { class: "btn danger", onclick: async () => {
+            try { await api(`/api/jobs/${j.id}/cancel`, {}); toast("Останавливаю…"); } catch (e) { toast(e.message); }
+          } }, "■ Остановить")
+        : [el("button", { class: "btn primary", onclick: () => { S.stage = "input"; S.job = null; S.plan = null; S.task = ""; store.set("draft", ""); render(); } }, "Новая задача"),
+           S.plan && el("button", { class: "btn", onclick: () => { S.stage = "plan"; render(); } }, "Повторить с изменениями")],
+      el("span", { class: "muted mono", style: "font-size:12px;word-break:break-all", text: j.run_dir })));
+}
+
+// ------------------------------------------------------------------ history
+function viewHistory() {
+  const box = el("section", {}, el("div", { class: "empty" }, el("span", { class: "spinner" })));
+  api("/api/history").then(r => {
+    if (!r.runs.length) {
+      box.replaceChildren(el("div", { class: "card empty" }, "Запусков пока не было."));
+      return;
+    }
+    box.replaceChildren(el("div", { class: "hist" }, r.runs.map(run => {
+      const st = Object.values(run.status || {});
+      const count = k => st.filter(s => s === k).length;
+      const body = el("div", { class: "body" });
+      const item = el("details", { class: "hist-item", ontoggle: async e => {
+        if (!e.target.open || body.dataset.loaded) return;
+        body.dataset.loaded = "1";
+        body.append(el("span", { class: "spinner" }));
+        try {
+          const d = await api("/api/history/detail?run_dir=" + encodeURIComponent(run.run_dir));
+          body.replaceChildren(
+            el("div", { class: "tasks" }, (d.plan.tasks || []).map(t => el("details", { class: "task" },
+              el("summary", {},
+                el("span", { class: "st-icon " + (run.status?.[t.id] || ""), text: { done: "✓", failed: "!", skipped: "↷", cancelled: "■" }[run.status?.[t.id]] || "" }),
+                el("span", { class: "title" }, el("span", { class: "muted mono", text: t.id + "  " }), t.title),
+                agentChip(t.agent), tierChip(t.tier)),
+              el("div", { class: "body" }, el("pre", { text: d.reports[t.id] || "(нет отчёта)" }))))),
+            el("div", { class: "actions" },
+              el("button", { class: "btn small", onclick: () => {
+                S.task = run.goal; S.workdir = run.workdir; S.plan = { summary: d.plan.summary || "", tasks: d.plan.tasks };
+                S.notes = []; S.stage = "plan"; go("task");
+              } }, "Открыть план снова"),
+              el("span", { class: "muted mono", style: "font-size:12px;word-break:break-all", text: run.run_dir })));
+        } catch (err) { body.replaceChildren(el("div", { class: "err-box", text: err.message })); }
+      } },
+        el("summary", {},
+          el("span", { class: "goal", text: run.goal || run.summary || "(без названия)" }),
+          el("span", { class: "badge " + (run.ok ? "done" : "failed"), text: run.ok ? "Готово" : "Есть ошибки" }),
+          el("div", { class: "meta" },
+            el("span", { text: fmtDate(run.ts) }),
+            el("span", { class: "mono", text: run.workdir }),
+            el("span", { text: `✓ ${count("done")}` + (count("failed") ? `  ✗ ${count("failed")}` : "") + (count("skipped") ? `  ↷ ${count("skipped")}` : "") }))),
+        body);
+      return item;
+    })));
+  }).catch(e => box.replaceChildren(el("div", { class: "err-box", text: e.message })));
+  return box;
+}
+
+// ------------------------------------------------------------------ stats
+function viewStats() {
+  const box = el("section", {});
+  const load = async () => {
+    box.replaceChildren(el("div", { class: "empty" }, el("span", { class: "spinner" })));
+    try {
+      const r = await api("/api/stats?days=" + S.statsDays);
+      box.replaceChildren(renderStats(r, load));
+    } catch (e) { box.replaceChildren(el("div", { class: "err-box", text: e.message })); }
+  };
+  load();
+  return box;
+}
+
+function renderStats(r, reload) {
+  let calls = 0, tokens = 0, light = 0, heavy = 0;
+  for (const tiers of Object.values(r.usage)) for (const [tier, s] of Object.entries(tiers)) {
+    calls += s.calls; tokens += s.input_tokens + s.output_tokens;
+    if (tier === "light") light += s.calls; if (tier === "heavy") heavy += s.calls;
+  }
+  const pct = calls ? Math.round((calls - heavy) / calls * 100) : 0;
+
+  const agentCard = name => {
+    const tiers = r.usage[name] || {};
+    const total = Object.values(tiers).reduce((a, s) => a + s.calls, 0);
+    const until = r.cooldowns[name];
+    const setCd = async body => {
+      try { await api("/api/cooldown", { agent: name, ...body }); await refreshState(); reload(); } catch (e) { toast(e.message); }
+    };
+    return el("div", { class: "card agent-card" },
+      el("h3", {}, el("span", { class: "sw", style: `background:var(--${name})` }), AGENT_NAME[name],
+        el("span", { class: "muted", style: "font-weight:500;font-size:14px;margin-left:auto", text: `${total} ${plural(total, "вызов", "вызова", "вызовов")}` })),
+      el("div", { class: "meter" }, ["light", "medium", "heavy"].map(t =>
+        tiers[t] ? el("i", { class: t, style: `flex:${tiers[t].calls}` }) : null)),
+      total ? el("table", {},
+        el("thead", {}, el("tr", {}, ["Уровень", "Вызовы", "Ошибки", "Токены", "Время"].map(h => el("th", { text: h })))),
+        el("tbody", {}, ["light", "medium", "heavy"].filter(t => tiers[t]).map(t => {
+          const s = tiers[t];
+          return el("tr", {}, el("td", {}, tierChip(t)), el("td", { text: s.calls }), el("td", { text: s.failed || "—" }),
+            el("td", { text: fmtNum(s.input_tokens + s.output_tokens) }), el("td", { text: Math.round(s.seconds / 60) + " мин" }));
+        })))
+        : el("div", { class: "muted", style: "font-size:14px", text: "За этот период вызовов не было." }),
+      el("div", { class: "cool" },
+        until ? el("div", {}, el("span", { class: "dot warn", style: "display:inline-block;margin-right:8px" }),
+                   "Квота кончилась, агент на паузе до ", el("b", { text: fmtDate(until) }))
+              : el("div", {}, el("span", { class: "dot ok", style: "display:inline-block;margin-right:8px" }), "Доступен"),
+        el("div", { class: "row" },
+          until ? el("button", { class: "btn small", onclick: () => setCd({ clear: true }) }, "Снять паузу")
+                : [el("button", { class: "btn small", onclick: () => setCd({ hours: 5 }) }, "Квота кончилась · 5 ч"),
+                   el("button", { class: "btn small", onclick: () => setCd({ hours: 72 }) }, "· 3 дня"),
+                   el("button", { class: "btn small", onclick: () => setCd({ hours: 168 }) }, "· неделя")])));
+  };
+
+  return el("div", {},
+    el("div", { class: "row", style: "margin-bottom:16px" },
+      el("h2", { class: "grow", style: "margin:0;font-size:20px", text: "Расход квот" }),
+      seg([[1, "Сутки"], [7, "Неделя"], [30, "Месяц"]], S.statsDays, v => { S.statsDays = v; render(); })),
+    el("div", { class: "kpis" },
+      el("div", { class: "kpi" }, el("div", { class: "k", text: "Запусков" }),
+        el("div", { class: "v" }, String(r.runs), el("small", { text: `  ✓ ${r.runs_ok}` }))),
+      el("div", { class: "kpi" }, el("div", { class: "k", text: "Вызовов моделей" }), el("div", { class: "v", text: calls })),
+      el("div", { class: "kpi" }, el("div", { class: "k", text: "Без тяжёлых моделей" }),
+        el("div", { class: "v", style: `color:var(--${pct >= 70 ? "ok" : pct >= 40 ? "warn" : "err"})`, text: calls ? pct + "%" : "—" })),
+      el("div", { class: "kpi" }, el("div", { class: "k", text: "Токенов" }), el("div", { class: "v", text: fmtNum(tokens) }))),
+    el("div", { class: "agent-cards" }, ["claude", "codex"].map(agentCard)),
+    el("p", { class: "hint", text: "Когда агент отвечает «лимит исчерпан», aihub сам ставит его на паузу и переключается на второго. Если квота почти кончилась, поставь паузу вручную, чтобы работа сразу уходила другому." }));
+}
+
+// ------------------------------------------------------------------ settings
+function viewSettings() {
+  const box = el("section", {}, el("div", { class: "empty" }, el("span", { class: "spinner" })));
+  api("/api/settings").then(r => box.replaceChildren(renderSettings(r))).catch(e => box.replaceChildren(el("div", { class: "err-box", text: e.message })));
+  return box;
+}
+
+function renderSettings(r) {
+  const c = JSON.parse(JSON.stringify(r.effective));
+  const save = async (btn, body) => {
+    btn.disabled = true;
+    try { await api("/api/settings", body); await refreshState(); toast("Сохранено"); render(); }
+    catch (e) { toast(e.message); btn.disabled = false; }
+  };
+  const sel = (value, options, onch) => el("select", { onchange: e => onch(e.target.value) },
+    options.map(([v, l]) => { const o = el("option", { value: v, text: l }); if (v === value) o.selected = true; return o; }));
+  const num = (value, onch, attrs = {}) => el("input", { type: "number", value, ...attrs, oninput: e => onch(Number(e.target.value)) });
+  const f = (label, input, hint) => el("div", { class: "field" }, el("label", { text: label }), input, hint && el("div", { class: "hint", text: hint }));
+
+  const agentBlock = name => {
+    const a = c.agents[name];
+    const efforts = name === "claude" ? ["low", "medium", "high", "xhigh", "max"] : ["minimal", "low", "medium", "high", "xhigh"];
+    const models = name === "claude" ? ["haiku", "sonnet", "opus"] : [];
+    const dl = "models-" + name, de = "efforts-" + name;
+    return el("div", { class: "card" },
+      el("div", { class: "row", style: "margin-bottom:14px" },
+        el("h2", { class: "grow", style: "margin:0" }, el("span", { class: "chip " + name, style: "font-size:15px;padding:3px 12px", text: AGENT_NAME[name] })),
+        el("label", { class: "switch" }, el("input", { type: "checkbox", checked: a.enabled, onchange: e => { a.enabled = e.target.checked; } }), "Включён")),
+      el("div", { class: "set-grid" },
+        f("Команда", el("input", { type: "text", class: "mono", value: Array.isArray(a.command) ? a.command.join(" ") : a.command,
+          oninput: e => { a.command = e.target.value; } }), "Обычно не нужно менять"),
+        name === "claude"
+          ? f("Права", sel(a.permission_mode, [["acceptEdits", "Правит файлы сам (рекомендуется)"], ["bypassPermissions", "Полная автономия"], ["dontAsk", "Только разрешённое"], ["plan", "Только читать"]], v => { a.permission_mode = v; }))
+          : f("Песочница", sel(a.sandbox, [["workspace-write", "Правит файлы в проекте (рекомендуется)"], ["danger-full-access", "Полный доступ"], ["read-only", "Только читать"]], v => { a.sandbox = v; }))),
+      el("span", { class: "label", text: "Модели по уровням" }),
+      el("table", { class: "tier-table" },
+        el("thead", {}, el("tr", {}, el("th", { text: "" }), el("th", { text: "Модель" }), el("th", { text: "Усилие" }))),
+        el("tbody", {}, ["light", "medium", "heavy"].map(t => el("tr", {},
+          el("td", {}, tierChip(t)),
+          el("td", {}, el("input", { type: "text", class: "mono", value: a.tiers[t].model || "", list: dl,
+            placeholder: name === "codex" ? "по умолчанию" : "", oninput: e => { a.tiers[t].model = e.target.value; } })),
+          el("td", {}, el("input", { type: "text", class: "mono", value: a.tiers[t].effort || "", list: de,
+            oninput: e => { a.tiers[t].effort = e.target.value; } })))))),
+      el("datalist", { id: dl }, models.map(m => el("option", { value: m }))),
+      el("datalist", { id: de }, efforts.map(m => el("option", { value: m }))),
+      name === "codex" && el("div", { class: "hint", text: "Пустая модель = модель по умолчанию из ~/.codex/config.toml. Названия моделей своего тарифа смотри в codex командой /model." }));
+  };
+
+  const doctorBox = el("div", {});
+  const renderDoctor = d => doctorBox.replaceChildren(...Object.entries(d).map(([name, i]) =>
+    el("div", { class: "row", style: "margin:6px 0" },
+      el("span", { class: "dot " + (i.installed ? "ok" : "err") }),
+      el("b", { text: AGENT_NAME[name] }),
+      el("span", { class: "muted mono", style: "font-size:13px", text: i.installed ? `${i.version || ""}  ${i.path}` : "не найден в PATH — установи и залогинься" }))));
+  if (S.doctor) renderDoctor(S.doctor);
+
+  const saveBtn = el("button", { class: "btn primary" }, "Сохранить настройки");
+  saveBtn.onclick = () => save(saveBtn, { values: {
+    planner: c.planner, routing: c.routing, execution: c.execution,
+    agents: { claude: c.agents.claude, codex: c.agents.codex },
+  } });
+  const raw = el("textarea", { class: "mono", style: "min-height:320px;font-size:13px", value: r.text || r.defaults });
+  const rawBtn = el("button", { class: "btn" }, "Сохранить TOML");
+  rawBtn.onclick = () => save(rawBtn, { text: raw.value });
+
+  return el("div", {},
+    el("div", { class: "card" },
+      el("h2", { text: "Основное" }),
+      el("p", { class: "sub" }, "Файл настроек: ", el("span", { class: "mono", text: r.path })),
+      el("div", { class: "set-grid" },
+        f("Кто разбивает задачу по умолчанию", sel(c.planner.backend, PLANNERS.map(([k, t]) => [k, t]), v => { c.planner.backend = v; })),
+        f("Кого предпочитать", sel(c.routing.prefer, [["balanced", "Поровну"], ["claude", "Claude"], ["codex", "Codex"]], v => { c.routing.prefer = v; })),
+        f("Шагов одновременно", num(c.execution.parallel, v => { c.execution.parallel = Math.max(1, v || 1); }, { min: 1, max: 8 }),
+          "1 безопасно: агенты не правят одни файлы наперегонки"),
+        f("Пауза после «лимит исчерпан», часов", num(c.routing.cooldown_hours, v => { c.routing.cooldown_hours = v; }, { min: 0.5, step: 0.5 }))),
+      el("label", { class: "switch" }, el("input", { type: "checkbox", checked: c.execution.escalate_on_failure,
+        onchange: e => { c.execution.escalate_on_failure = e.target.checked; } }), "Если дешёвая модель не справилась — повторить на уровень выше"),
+      el("div", { class: "actions" }, saveBtn)),
+    agentBlock("claude"),
+    agentBlock("codex"),
+    el("div", { class: "actions", style: "margin:-4px 0 16px" }, (() => {
+      const b = el("button", { class: "btn primary" }, "Сохранить настройки");
+      b.onclick = () => saveBtn.onclick();
+      return b;
+    })()),
+    el("div", { class: "card" },
+      el("div", { class: "row" },
+        el("h2", { class: "grow", style: "margin:0", text: "Проверка агентов" }),
+        (() => {
+          const b = el("button", { class: "btn small" }, "Проверить ещё раз");
+          b.onclick = async () => { b.disabled = true; try { S.doctor = await api("/api/doctor?refresh=1"); renderDoctor(S.doctor); renderPills(); } catch (e) { toast(e.message); } b.disabled = false; };
+          return b;
+        })()),
+      doctorBox),
+    el("details", { class: "card" },
+      el("summary", { style: "cursor:pointer;font-weight:600", text: "Для продвинутых: файл настроек целиком" }),
+      el("p", { class: "hint", text: "Здесь можно задать всё, включая allowed_tools и extra_args. Описание каждого параметра — в комментариях к настройкам по умолчанию." }),
+      raw,
+      el("div", { class: "actions" }, rawBtn,
+        el("button", { class: "btn small", onclick: () => { raw.value = r.defaults; } }, "Вставить настройки по умолчанию"))));
+}
+
+// ------------------------------------------------------------------ boot
+async function refreshState() {
+  try { S.server = await api("/api/state"); } catch (e) { toast(e.message); }
+  renderPills();
+}
+
+async function boot() {
+  const theme = store.get("theme", null);
+  if (theme) document.documentElement.dataset.theme = theme;
+  renderTabs();
+  await refreshState();
+  if (S.server) {
+    S.workdir = store.get("workdir", "") || S.server.workdir;
+    S.planner = store.get("planner", null) || S.server.planner;
+    const running = S.server.running || [];
+    const saved = store.get("job", null);
+    const id = running.includes(saved) ? saved : running[0];
+    if (id) { S.job = { id }; S.stage = "run"; S.tab = "task"; renderTabs(); await poll(); }
+  }
+  render();
+  api("/api/doctor").then(d => { S.doctor = d; renderPills(); }).catch(() => {});
+}
+boot();
+</script>
+</body>
+</html>

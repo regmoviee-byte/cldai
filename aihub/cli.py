@@ -1,4 +1,4 @@
-"""Command-line interface: aihub run | plan | exec | stats | cooldown | init | doctor."""
+"""Command-line interface: aihub run | plan | exec | ui | stats | cooldown | init | doctor."""
 
 from __future__ import annotations
 
@@ -13,10 +13,11 @@ from pathlib import Path
 
 from . import __version__
 from .agents import make_agents
+from . import service
 from .config import AGENTS, DEFAULT_CONFIG_PATH, TIERS, ConfigError, hub_home, load
 from .executor import Executor, available_agents, reroute
 from .ledger import Ledger
-from .planner import PlanError, build_prompt, extract_json, heuristic_plan, manual_plan, normalize
+from .planner import PlanError, manual_plan, normalize
 
 
 def log(msg: str) -> None:
@@ -37,49 +38,23 @@ def new_run_dir(workdir: Path) -> Path:
     return workdir / ".aihub" / "runs" / time.strftime("%Y%m%d-%H%M%S")
 
 
-def pick_default_agent(cfg: dict, available: list[str]) -> str:
-    prefer = cfg["routing"]["prefer"]
-    if prefer in available:
-        return prefer
-    return available[0]
-
-
 def make_plan(task: str, cfg: dict, agents, ledger: Ledger, run_dir: Path, workdir: Path,
               backend: str, only: str | None) -> dict:
-    available = available_agents(agents, ledger, only)
-    if not available:
-        raise SystemExit("no agent is available (disabled or on cooldown). "
-                         "Check `aihub cooldown` / config.")
-    default_agent = pick_default_agent(cfg, available)
-    if backend == "heuristic":
-        return heuristic_plan(task, default_agent)
-
-    days = int(cfg["routing"].get("usage_window_days", 7))
-    unavailable = [a for a in AGENTS if a not in available]
-    prompt = build_prompt(task, prefer=only or cfg["routing"]["prefer"],
-                          usage=ledger.summary_text(days), days=days, unavailable=unavailable)
     try:
         if backend == "manual":
-            return manual_plan(prompt, run_dir)
-        planner = agents[backend]
-        if backend not in available:
-            raise PlanError(f"planner agent {backend} is unavailable")
-        tier = cfg["planner"]["tier"]
-        log(f"planning with {backend} {tier} ({planner.model_label(tier)})…")
-        res = planner.run(prompt, tier, workdir, text_only=True, timeout=600)
-        ledger.record({"run": run_dir.name, "task": "plan", "agent": backend, "tier": tier,
-                       "model": res.model, "ok": res.ok, "rate_limited": res.rate_limited,
-                       "seconds": round(res.seconds, 1), "usage": res.usage, "cost_usd": res.cost_usd})
-        if res.rate_limited:
-            ledger.set_cooldown(backend, float(cfg["routing"]["cooldown_hours"]))
-        if not res.ok:
-            raise PlanError(f"planner failed: {res.error.strip()[:300]}")
-        return normalize(extract_json(res.text), default_agent)
+            prompt = service.planner_prompt(task, cfg, agents, ledger, only)
+            try:
+                return service.parse_plan(manual_plan(prompt, run_dir), cfg, agents, ledger, only)
+            except PlanError as e:
+                if not cfg["planner"].get("fallback_to_heuristic", True):
+                    raise
+                log(f"{e} — falling back to heuristic routing")
+                backend = "heuristic"
+        return service.auto_plan(task, cfg, agents, ledger, workdir, backend, only, run_dir.name, log)
+    except service.NoAgentError as e:
+        raise SystemExit(f"{e}. Check `aihub cooldown` / config.")
     except PlanError as e:
-        if not cfg["planner"].get("fallback_to_heuristic", True):
-            raise SystemExit(str(e))
-        log(f"{e} — falling back to heuristic routing")
-        return heuristic_plan(task, default_agent)
+        raise SystemExit(str(e))
 
 
 def print_plan(plan: dict, agents) -> None:
@@ -271,6 +246,12 @@ def cmd_doctor(args) -> int:
     return rc
 
 
+def cmd_ui(args) -> int:
+    from .web.server import serve
+    return serve(args.config, port=args.port, open_browser=not args.no_browser,
+                 workdir=Path(args.workdir).resolve() if args.workdir else Path.cwd())
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aihub", description="Route coding tasks between Claude Code "
                                 "and Codex on the cheapest model that can do the job.")
@@ -323,6 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--local", action="store_true", help="./aihub.toml instead of ~/.aihub/config.toml")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("ui", help="open the web interface in your browser")
+    sp.add_argument("--port", type=int, default=8765)
+    sp.add_argument("--no-browser", action="store_true")
+    sp.add_argument("-C", "--workdir", help="default project directory")
+    sp.set_defaults(func=cmd_ui)
 
     sp = sub.add_parser("doctor", help="check that claude/codex CLIs are installed")
     sp.set_defaults(func=cmd_doctor)
