@@ -41,8 +41,10 @@ def child_env() -> dict:
     env = os.environ.copy()
     if os.name == "nt":
         # Inherited from PowerShell 7 this points Windows PowerShell 5.1 at the wrong modules
-        # (e.g. Get-FileHash goes missing and the Claude installer dies).
-        env.pop("PSModulePath", None)
+        # (e.g. Get-FileHash goes missing and the Claude installer dies). Windows environment
+        # names are case-insensitive and os.environ upper-cases them, so match any case.
+        for key in [k for k in env if k.upper() == "PSMODULEPATH"]:
+            del env[key]
     return env
 
 

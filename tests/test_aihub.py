@@ -353,7 +353,8 @@ class WebTests(Base):
         argv = agent_setup.install_argv("claude")
         self.assertIn("claude.ai/install", argv[-1])
         with mock.patch.dict(os.environ, {"PSModulePath": "x"}):
-            self.assertEqual("PSModulePath" in agent_setup.child_env(), os.name != "nt")
+            names = {k.upper() for k in agent_setup.child_env()}
+            self.assertEqual("PSMODULEPATH" in names, os.name != "nt")
 
     def test_shutdown_stops_running_job_and_server(self):
         import time
